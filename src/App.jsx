@@ -699,9 +699,18 @@ function AuthenticatedApp() {
   const [slips, setSlips] = useState({})
   const onSlipAttached = (slip) => { if (slip) setSlips((s) => ({ ...s, [slip.id]: slip })) }
 
-  async function loadAll() {
+  // silent (2026-08-17): skips the setLoading(true/false) toggle, which is
+  // what unmounts the whole tab area behind the "Loading…" placeholder (see
+  // comment below). Needed for YocoSyncTab's onSynced refresh — that one
+  // fires right after a successful sync specifically so the freshly-synced
+  // curio_issues show up, but a full loading-gate remount was wiping out
+  // YocoSyncTab's own local `result` state (the "Found X curio-shop line
+  // items..." summary and Unmatched panel) before Thijs ever saw it — the
+  // sync was actually working the whole time, it just looked like the
+  // button did nothing.
+  async function loadAll({ silent = false } = {}) {
     if (!companyId) return
-    setLoading(true)
+    if (!silent) setLoading(true)
     setError(null)
     try {
       const [itemsRes, spRes, purRes, issRes, supRes, slipRes] = await Promise.all([
@@ -723,7 +732,7 @@ function AuthenticatedApp() {
     } catch (e) {
       setError(e.message)
     } finally {
-      setLoading(false)
+      if (!silent) setLoading(false)
     }
   }
 
@@ -1105,7 +1114,12 @@ function AuthenticatedApp() {
               <OrdersTab items={items} metricsByItem={metricsByItem} suppliers={suppliers} supplierById={supplierById} />
             )}
             {activeTab === 'yoco' && role === 'admin' && (
-              <YocoSyncTab items={items} location={location} companyId={companyId} onSynced={loadAll} />
+              <YocoSyncTab
+                items={items}
+                location={location}
+                companyId={companyId}
+                onSynced={() => loadAll({ silent: true })}
+              />
             )}
           </>
         )}
