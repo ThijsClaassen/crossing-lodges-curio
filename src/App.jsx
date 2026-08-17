@@ -7,7 +7,7 @@ import Login from './Login.jsx'
 import SetPassword from './SetPassword.jsx'
 import { CompanyProvider, useCompany } from './CompanyContext.jsx'
 import { uploadPurchaseSlip, getSlipUrl } from './slipUpload.js'
-import { syncYocoSales } from './curioSalesEngine.js'
+import { syncYocoSales, learnYocoItemMatch } from './curioSalesEngine.js'
 
 // ---------------------------------------------------------------------------
 // Auth helpers — real Supabase Auth from day one (Curio Stock is app #7 of
@@ -3035,6 +3035,20 @@ function YocoSyncTab({ items, location, companyId, onSynced }) {
   const [result, setResult] = useState(null)
   const [syncError, setSyncError] = useState('')
 
+  // Per-row "teach this match" state for the Unmatched panel — keyed by
+  // Yoco item name. matchSelections holds whatever the user has picked in
+  // the dropdown (falls back to the sync's own fuzzy suggestedItemId until
+  // touched); savingMatch/matchErrors track the in-flight save per row so
+  // one row saving doesn't disable the others.
+  const [matchSelections, setMatchSelections] = useState({})
+  const [savingMatch, setSavingMatch] = useState(null)
+  const [matchErrors, setMatchErrors] = useState({})
+
+  const sortedItems = useMemo(
+    () => [...(items || [])].sort((a, b) => (a.category || '').localeCompare(b.category || '') || a.name.localeCompare(b.name)),
+    [items]
+  )
+
   async function runSync() {
     setSyncing(true)
     setSyncError('')
@@ -3050,6 +3064,26 @@ function YocoSyncTab({ items, location, companyId, onSynced }) {
     }
   }
 
+  // Saves the (Yoco name -> item) match permanently, then re-runs the sync
+  // so every already-seen sale with this name (in the current date range)
+  // is immediately turned into an issue — no need to explain to Thijs that
+  // he has to click Sync now again himself.
+  async function saveMatch(u) {
+    const itemId = matchSelections[u.name] ?? u.suggestedItemId
+    if (!itemId) return
+    setSavingMatch(u.name)
+    setMatchErrors((e) => ({ ...e, [u.name]: '' }))
+    try {
+      await learnYocoItemMatch({ companyId, yocoItemName: u.name, itemId })
+    } catch (err) {
+      setSavingMatch(null)
+      setMatchErrors((e) => ({ ...e, [u.name]: err.message || 'Could not save match.' }))
+      return
+    }
+    await runSync()
+    setSavingMatch(null)
+  }
+
   return (
     <>
       <div style={styles.card}>
@@ -3058,11 +3092,11 @@ function YocoSyncTab({ items, location, companyId, onSynced }) {
           Reads completed Yoco POS sales for {LOCATIONS.find((l) => l.id === location)?.name || location} in the
           date range below, classified as curio shop sales via the same category rules used in the
           Finance Dashboard's Budget vs Actual (Sales &amp; Marketing → Yoco Sales tab, maintained by
-          Thijs). Each matched sale is confidently paired with an item on this lodge's Items list by
-          name and logged as a Sale issue here — running this again for the same range never
-          double-counts. Items in a Yoco sale that don't confidently match anything on the Items list
-          are listed below instead of being guessed at, so you can add or rename an item to catch them
-          next time.
+          Thijs). Each matched sale is paired with an item on this lodge's Items list — either a match
+          you've taught before (remembered exactly, forever) or a confident automatic name match — and
+          logged as a Sale issue here. Running this again for the same range never double-counts.
+          Anything that doesn't match either way is listed below so you can match it once and the sync
+          will recognize it every time after.
         </div>
         <div style={styles.formGrid}>
           <div>
@@ -3105,11 +3139,13 @@ function YocoSyncTab({ items, location, companyId, onSynced }) {
         <div style={styles.card}>
           <div style={styles.cardTitle}>Unmatched Yoco sales ({result.unmatched.length})</div>
           <div style={{ fontSize: 12, color: colors.muted, marginBottom: 10 }}>
-            These Yoco line items were classified as curio shop sales but couldn't be confidently
-            matched to an item on this lodge's Items list — no issue was created for them. Either add
-            a matching item (or rename an existing one closer to the Yoco name) and re-sync, or ignore
-            it if it's not actually curio stock (e.g. a miscategorized item in the Finance Dashboard's
-            Yoco Sales rules).
+            These Yoco line items were classified as curio shop sales but no issue was created for
+            them yet. Pick the matching item and click Match — it creates the issue(s) for every sale
+            of this name in the range above right now, and this exact Yoco name will be recognized
+            automatically on every future sync, no need to match it again. If a row already shows a
+            suggested item, that's the sync's best guess (not confident enough to apply on its own) —
+            check it's correct before saving. If a name isn't actually curio stock (e.g. miscategorized
+            in the Finance Dashboard's Yoco Sales rules), it's fine to leave it unmatched.
           </div>
           <div style={styles.tableWrap}>
             <table style={styles.table}>
@@ -3120,18 +3156,52 @@ function YocoSyncTab({ items, location, companyId, onSynced }) {
                   <th style={styles.th}>Qty</th>
                   <th style={styles.th}>Value (excl. VAT)</th>
                   <th style={styles.th}>Last seen</th>
+                  <th style={styles.th}>Match to item</th>
+                  <th style={styles.th}></th>
                 </tr>
               </thead>
               <tbody>
-                {result.unmatched.map((u) => (
-                  <tr key={u.name}>
-                    <td style={styles.td}>{u.name}</td>
-                    <td style={styles.tdNum}>{u.orders}</td>
-                    <td style={styles.tdNum}>{fmt(u.quantity, 0)}</td>
-                    <td style={styles.tdNum}>R {fmt(u.value)}</td>
-                    <td style={styles.td}>{u.lastSeen || '—'}</td>
-                  </tr>
-                ))}
+                {result.unmatched.map((u) => {
+                  const selected = matchSelections[u.name] ?? u.suggestedItemId ?? ''
+                  const isSaving = savingMatch === u.name
+                  return (
+                    <tr key={u.name}>
+                      <td style={styles.td}>{u.name}</td>
+                      <td style={styles.tdNum}>{u.orders}</td>
+                      <td style={styles.tdNum}>{fmt(u.quantity, 0)}</td>
+                      <td style={styles.tdNum}>R {fmt(u.value)}</td>
+                      <td style={styles.td}>{u.lastSeen || '—'}</td>
+                      <td style={styles.td}>
+                        <select
+                          style={styles.smallInput}
+                          value={selected}
+                          disabled={isSaving}
+                          onChange={(e) => setMatchSelections((m) => ({ ...m, [u.name]: e.target.value }))}
+                        >
+                          <option value="">Select item…</option>
+                          {sortedItems.map((it) => (
+                            <option key={it.id} value={it.id}>
+                              {it.category ? `${it.category} — ${it.name}` : it.name}
+                            </option>
+                          ))}
+                        </select>
+                        {u.suggestedItemName && !matchSelections[u.name] && (
+                          <div style={{ fontSize: 11, color: colors.muted, marginTop: 2 }}>
+                            Suggested: {u.suggestedItemName}
+                          </div>
+                        )}
+                        {matchErrors[u.name] && (
+                          <div style={{ fontSize: 11, color: colors.danger, marginTop: 2 }}>{matchErrors[u.name]}</div>
+                        )}
+                      </td>
+                      <td style={styles.td}>
+                        <button style={styles.button} disabled={!selected || isSaving} onClick={() => saveMatch(u)}>
+                          {isSaving ? 'Matching…' : 'Match'}
+                        </button>
+                      </td>
+                    </tr>
+                  )
+                })}
               </tbody>
             </table>
           </div>
