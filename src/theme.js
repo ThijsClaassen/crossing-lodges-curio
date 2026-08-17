@@ -36,9 +36,10 @@ export const fonts = {
 // non-`!important` media-query rule, which is exactly the trap the app's
 // old `.desktop-tab-row`/`.mobile-nav-bar` inline-styled version fell into.
 export const css = `
-  .shell{display:flex;min-height:100vh}
+  body{background:${colors.bg};color:${colors.cream};font-family:'Inter',sans-serif}
+  .shell{display:flex;min-height:100vh;background:${colors.bg};color:${colors.cream}}
   .sidebar{width:230px;background:${colors.panel};border-right:1px solid ${colors.border};display:flex;flex-direction:column;flex-shrink:0;position:sticky;top:0;height:100vh;overflow-y:auto}
-  .main{flex:1;min-width:0}
+  .main{flex:1;min-width:0;background:${colors.bg};color:${colors.cream}}
   .bottom-nav{display:none}
 
   .sidebar-logo{padding:20px 18px 16px;border-bottom:1px solid ${colors.border};display:flex;flex-direction:column;align-items:center;gap:8px}
