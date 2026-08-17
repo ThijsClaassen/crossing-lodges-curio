@@ -1,6 +1,6 @@
 import { useEffect, useMemo, useRef, useState } from 'react'
 import { sb, LOCATIONS, currentPeriod } from './sb.js'
-import { colors, fonts } from './theme.js'
+import { colors, fonts, css } from './theme.js'
 import BarcodeScanner from './BarcodeScanner.jsx'
 import { supabase } from './supabaseClient.js'
 import Login from './Login.jsx'
@@ -913,80 +913,118 @@ function AuthenticatedApp() {
   const activeTab = TABS.some((t) => t.id === tab) ? tab : TABS[0].id
 
   return (
-    <div style={styles.app}>
-      {/* Responsive nav split: a normal always-visible tab row on screens
-          wide enough to fit one (desktop/tablet), the fixed-bottom "Menu"
-          button + sheet only below 768px where a full tab row would clip or
-          need horizontal scrolling to reach every tab. Same 768px
-          breakpoint used across the other Crossing Lodges apps. */}
-      <style>{`
-        .desktop-tab-row { display: flex; }
-        .mobile-nav-bar { display: none; }
-        @media (max-width: 768px) {
-          .desktop-tab-row { display: none; }
-          .mobile-nav-bar { display: flex; }
-        }
-      `}</style>
-      <div style={styles.header}>
-        <div style={{ ...styles.row, justifyContent: 'space-between', flexWrap: 'wrap' }}>
-          <div style={{ ...styles.headerTitle, minWidth: 0, flexShrink: 1 }}>
-            <img
-              src="/logo.png"
-              alt=""
-              style={{ ...styles.logo, flexShrink: 0 }}
-              onError={(e) => (e.target.style.display = 'none')}
-            />
-            <span style={{ overflow: 'hidden', textOverflow: 'ellipsis' }}>Crossing Lodges — Curio Stock</span>
-          </div>
-          <div style={{ ...styles.row, flexShrink: 0 }}>
-            <span style={styles.badge('neutral')}>{role === 'admin' ? 'Admin' : 'Staff'}</span>
-            <button style={{ ...styles.pill(false), padding: '4px 10px' }} onClick={logout}>
-              Log out
-            </button>
-          </div>
+    <div className="shell">
+      <style>{css}</style>
+
+      {/* ── DESKTOP SIDEBAR — same shell/sidebar/nav pattern as Ops/Maintenance,
+          tabs listed top-to-bottom on the left (2026-08-17). Hidden <=768px;
+          the topbar + mobile-loc-bar + bottom-nav sheet below cover mobile. */}
+      <div className="sidebar">
+        <div className="sidebar-logo">
+          <img src="/logo.png" alt="" onError={(e) => (e.target.style.display = 'none')} />
+          <div className="sidebar-sub">Curio Stock</div>
+          <div className="sidebar-company">{companyName}</div>
         </div>
-        <div style={styles.row}>
-          <div style={styles.pillGroup}>
-            {LOCATIONS.map((l) => (
-              <button key={l.id} style={styles.pill(location === l.id, l.id)} onClick={() => setLocation(l.id)}>
-                {l.id}
-              </button>
-            ))}
+
+        {availableCompanies.length > 1 && (
+          <div className="sidebar-select-wrap">
+            <select className="sidebar-select" value={companyId} onChange={(e) => switchCompany(e.target.value)}>
+              {availableCompanies.map((c) => (
+                <option key={c.id} value={c.id}>
+                  {c.name}
+                </option>
+              ))}
+            </select>
           </div>
+        )}
+
+        <div className="loc-switcher">
+          <div className="loc-label">Location</div>
+          {LOCATIONS.map((l) => (
+            <button
+              key={l.id}
+              className={`loc-btn${location === l.id ? ` active-${l.id}` : ''}`}
+              onClick={() => setLocation(l.id)}
+            >
+              <span className="loc-dot" style={{ background: colors.loc[l.id] }} />
+              {l.name}
+            </button>
+          ))}
+        </div>
+
+        <div className="period-wrap">
           <input
             type="month"
             value={period}
             onChange={(e) => setPeriod(e.target.value)}
-            style={styles.monthInput}
+            style={{ ...styles.monthInput, width: '100%', boxSizing: 'border-box' }}
           />
-          {availableCompanies.length > 1 && (
-            <select
-              value={companyId}
-              onChange={(e) => switchCompany(e.target.value)}
-              style={{
-                fontSize: 12,
-                padding: '6px 8px',
-                background: colors.bg,
-                color: colors.cream,
-                border: `1px solid ${colors.border}`,
-                borderRadius: 8,
-              }}
+        </div>
+
+        <nav className="nav">
+          {TABS.map((t) => (
+            <button
+              key={t.id}
+              className={`nav-item${activeTab === t.id ? ' active' : ''}`}
+              onClick={() => setTab(t.id)}
             >
-              {availableCompanies.map((c) => (
-                <option key={c.id} value={c.id}>{c.name}</option>
-              ))}
-            </select>
-          )}
+              {t.label}
+            </button>
+          ))}
+        </nav>
+
+        <div className="sidebar-footer">
+          <span style={styles.badge('neutral')}>{role === 'admin' ? 'Admin' : 'Staff'}</span>
+          <div className="sidebar-footer-row">
+            <button className="sidebar-footer-btn" onClick={() => loadAll()}>
+              Refresh
+            </button>
+            <button className="sidebar-footer-btn" onClick={logout}>
+              Sign out
+            </button>
+          </div>
         </div>
       </div>
 
-      <nav className="desktop-tab-row" style={styles.desktopTabRow}>
-        {TABS.map((t) => (
-          <button key={t.id} style={styles.desktopTab(activeTab === t.id)} onClick={() => setTab(t.id)}>
-            {t.label}
-          </button>
-        ))}
-      </nav>
+      <div className="main">
+        <div className="topbar">
+          <div className="page-title">{companyName} — {TABS.find((t) => t.id === activeTab)?.label}</div>
+          <div style={{ display: 'flex', gap: 8, alignItems: 'center', flexWrap: 'wrap' }}>
+            {availableCompanies.length > 1 && (
+              <select className="topbar-select" value={companyId} onChange={(e) => switchCompany(e.target.value)}>
+                {availableCompanies.map((c) => (
+                  <option key={c.id} value={c.id}>
+                    {c.name}
+                  </option>
+                ))}
+              </select>
+            )}
+            <span style={styles.badge('neutral')}>{role === 'admin' ? 'Admin' : 'Staff'}</span>
+            <button className="topbar-signout" onClick={logout}>
+              Log out
+            </button>
+          </div>
+        </div>
+
+        <div className="mobile-loc-bar">
+          {LOCATIONS.map((l) => (
+            <button
+              key={l.id}
+              className={`mobile-loc-btn${location === l.id ? ` active-${l.id}` : ''}`}
+              onClick={() => setLocation(l.id)}
+            >
+              <span style={{ display: 'inline-block', width: 6, height: 6, borderRadius: '50%', background: colors.loc[l.id] }} />
+              {l.id}
+            </button>
+          ))}
+          <input
+            type="month"
+            value={period}
+            onChange={(e) => setPeriod(e.target.value)}
+            className="mobile-period-input"
+            style={styles.monthInput}
+          />
+        </div>
 
       <div style={styles.content}>
         {error && (
@@ -1125,37 +1163,38 @@ function AuthenticatedApp() {
         )}
       </div>
 
-      <div className="mobile-nav-bar" style={styles.navBar}>
-        <button style={styles.navMenuButton} onClick={() => setMenuOpen(true)}>
-          <span>☰</span>
-          <span>{TABS.find((t) => t.id === activeTab)?.label || 'Menu'}</span>
-        </button>
-      </div>
-
-      {menuOpen && (
-        <div className="mobile-nav-bar" style={{ ...styles.navOverlay, display: undefined }} onClick={() => setMenuOpen(false)}>
-          <div style={styles.navSheet} onClick={(e) => e.stopPropagation()}>
-            <div style={styles.navSheetHeader}>
-              <span style={styles.navSheetTitle}>Menu</span>
-              <button style={styles.navSheetClose} onClick={() => setMenuOpen(false)}>
-                Close
-              </button>
-            </div>
-            {TABS.map((t) => (
-              <button
-                key={t.id}
-                style={styles.navSheetItem(activeTab === t.id)}
-                onClick={() => {
-                  setTab(t.id)
-                  setMenuOpen(false)
-                }}
-              >
-                {t.label}
-              </button>
-            ))}
-          </div>
+        <div className="bottom-nav">
+          <button style={styles.navMenuButton} onClick={() => setMenuOpen(true)}>
+            <span>☰</span>
+            <span>{TABS.find((t) => t.id === activeTab)?.label || 'Menu'}</span>
+          </button>
         </div>
-      )}
+
+        {menuOpen && (
+          <div style={styles.navOverlay} onClick={() => setMenuOpen(false)}>
+            <div style={styles.navSheet} onClick={(e) => e.stopPropagation()}>
+              <div style={styles.navSheetHeader}>
+                <span style={styles.navSheetTitle}>Menu</span>
+                <button style={styles.navSheetClose} onClick={() => setMenuOpen(false)}>
+                  Close
+                </button>
+              </div>
+              {TABS.map((t) => (
+                <button
+                  key={t.id}
+                  style={styles.navSheetItem(activeTab === t.id)}
+                  onClick={() => {
+                    setTab(t.id)
+                    setMenuOpen(false)
+                  }}
+                >
+                  {t.label}
+                </button>
+              ))}
+            </div>
+          </div>
+        )}
+      </div>
     </div>
   )
 }
