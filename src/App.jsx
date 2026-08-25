@@ -168,7 +168,20 @@ function applyVatToRows(rows, pricesIncludeVat, vatRate) {
 // a guest purchase (what "issues" usually means here); everything else is
 // a write-off. Plain list, not a DB enum — add another reason here any
 // time.
-const ISSUE_REASONS = ['Sale', 'Breakage', 'Theft/Shrinkage', 'Staff', 'Gift/Comp', 'Other']
+const ISSUE_REASONS = ['Sale', 'Breakage', 'Theft/Shrinkage', 'Staff', 'Gift/Comp', 'Returned to Supplier', 'Other']
+
+// Supplier Credit Notes (2026-08-25) — when the wrong item was bought and
+// has to go back to the supplier. Reasons match the shared
+// supplier_credit_notes table's check constraint (see
+// add_supplier_credit_notes.sql) — keep in sync across all 5 apps.
+const CREDIT_REASONS = [
+  { value: 'wrong_item', label: 'Wrong item' },
+  { value: 'damaged', label: 'Damaged' },
+  { value: 'short_delivery', label: 'Short delivery' },
+  { value: 'overcharged', label: 'Overcharged' },
+  { value: 'duplicate', label: 'Duplicate' },
+  { value: 'other', label: 'Other' },
+]
 
 function computeMetrics(item, stockPeriod, itemPurchases, itemIssues) {
   const opening = stockPeriod?.opening_units ?? 0
@@ -608,6 +621,7 @@ const ADMIN_TABS = [
   { id: 'suppliers', label: 'Suppliers' },
   { id: 'opening', label: 'Opening' },
   { id: 'purchases', label: 'Purchases' },
+  { id: 'credits', label: 'Credit Notes' },
   { id: 'issues', label: 'Issues' },
   { id: 'count', label: 'Count' },
   { id: 'variance', label: 'Variance' },
@@ -691,6 +705,7 @@ function AuthenticatedApp() {
   const [purchases, setPurchases] = useState([])
   const [issues, setIssues] = useState([])
   const [suppliers, setSuppliers] = useState([])
+  const [creditNotes, setCreditNotes] = useState([])
   const [error, setError] = useState(null)
   // Purchase slip photos — keyed by purchase_slips.id, loaded company-wide
   // (not period-filtered, since a slip photo isn't tied to a reporting
@@ -713,12 +728,13 @@ function AuthenticatedApp() {
     if (!silent) setLoading(true)
     setError(null)
     try {
-      const [itemsRes, spRes, purRes, issRes, supRes, slipRes] = await Promise.all([
+      const [itemsRes, spRes, purRes, issRes, supRes, cnRes, slipRes] = await Promise.all([
         sb.select('curio_items', { location_id: location, active: true, company_id: companyId }, { order: 'category.asc,name.asc' }),
         sb.select('curio_stock_periods', { location_id: location, period, company_id: companyId }, {}),
         sb.select('curio_purchases', { location_id: location, period, company_id: companyId }, { order: 'date.asc' }),
         sb.select('curio_issues', { location_id: location, period, company_id: companyId }, { order: 'date.asc' }),
         sb.select('curio_suppliers', { location_id: location, active: true, company_id: companyId }, { order: 'name.asc' }),
+        sb.select('supplier_credit_notes', { company_id: companyId, location_id: location, app: 'curio', period }, { order: 'date.asc' }),
         sb.select('purchase_slips', { company_id: companyId, app: 'curio' }, {}),
       ])
       setItems(itemsRes || [])
@@ -726,6 +742,7 @@ function AuthenticatedApp() {
       setPurchases(purRes || [])
       setIssues(issRes || [])
       setSuppliers(supRes || [])
+      setCreditNotes(cnRes || [])
       const slipMap = {}
       ;(slipRes || []).forEach((s) => { slipMap[s.id] = s })
       setSlips(slipMap)
@@ -793,6 +810,13 @@ function AuthenticatedApp() {
   }
   function removeLocalIssue(id) {
     setIssues((prev) => prev.filter((i) => i.id !== id))
+  }
+
+  function addLocalCreditNote(row) {
+    setCreditNotes((prev) => [...prev, row])
+  }
+  function removeLocalCreditNote(id) {
+    setCreditNotes((prev) => prev.filter((c) => c.id !== id))
   }
 
   const stockByItem = useMemo(() => {
@@ -1112,6 +1136,23 @@ function AuthenticatedApp() {
                 onUpdate={updateLocalPurchase}
                 onRemove={removeLocalPurchase}
                 companyId={companyId}
+                slips={slips}
+                onSlipAttached={onSlipAttached}
+              />
+            )}
+            {activeTab === 'credits' && role === 'admin' && (
+              <CreditNotesTab
+                items={items}
+                suppliers={suppliers}
+                creditNotes={creditNotes}
+                metricsByItem={metricsByItem}
+                location={location}
+                companyId={companyId}
+                period={period}
+                onAdd={addLocalCreditNote}
+                onRemove={removeLocalCreditNote}
+                onIssueAdd={addLocalIssue}
+                onIssueRemove={removeLocalIssue}
                 slips={slips}
                 onSlipAttached={onSlipAttached}
               />
@@ -2695,6 +2736,258 @@ function IssuesTab({ items, issues, location, period, onAdd, onRemove, companyId
               <tr>
                 <td style={styles.td} colSpan={6}>
                   No issues logged yet.
+                </td>
+              </tr>
+            )}
+          </tbody>
+        </table>
+        </div>
+      </div>
+    </>
+  )
+}
+
+// ---------------------------------------------------------------------------
+// Credit Notes tab — Admin only. When the wrong item was bought and has to
+// go back to the supplier: reduces stock the same way a normal issue does
+// (reason "Returned to Supplier") and logs a row to the shared
+// supplier_credit_notes table so Finance Dashboard can cross-check it
+// against the supplier's statement, same as purchases already are.
+// ---------------------------------------------------------------------------
+
+function CreditNotesTab({ items, suppliers, creditNotes, metricsByItem, location, companyId, period, onAdd, onRemove, onIssueAdd, onIssueRemove, slips, onSlipAttached }) {
+  const [form, setForm] = useState({
+    item_id: '',
+    date: new Date().toISOString().slice(0, 10),
+    qty: '',
+    unit_cost: '',
+    supplier: '',
+    reason: 'wrong_item',
+    credit_note_number: '',
+    notes: '',
+    pendingSlipBlob: null,
+    pendingSlipName: '',
+  })
+  const [saving, setSaving] = useState(false)
+
+  function pickItem(id) {
+    const m = metricsByItem[id]
+    setForm((f) => ({ ...f, item_id: id, unit_cost: m ? String(round2(m.weightedAvgCost)) : f.unit_cost }))
+  }
+
+  async function pickSlipFile(e) {
+    const file = e.target.files?.[0]
+    e.target.value = ''
+    if (!file) return
+    const resized = await resizeImageFile(file)
+    setForm((f) => ({ ...f, pendingSlipBlob: resized, pendingSlipName: file.name }))
+  }
+
+  const itemName = (id) => items.find((i) => i.id === id)?.name || '—'
+  const qtyNum = Number(form.qty) || 0
+  const unitCostNum = Number(form.unit_cost) || 0
+  const totalCreditPreview = round2(qtyNum * unitCostNum)
+
+  async function addCreditNote() {
+    if (!form.item_id || !form.qty || !form.supplier) return
+    setSaving(true)
+    try {
+      let slipId = null
+      if (form.pendingSlipBlob) {
+        const slip = await uploadPurchaseSlip({ companyId, locationId: location, blob: form.pendingSlipBlob })
+        slipId = slip.id
+        onSlipAttached(slip)
+      }
+
+      // Dual-write: a normal stock-reducing issue first (so every existing
+      // stock-count/variance/reorder calculation just works), then the
+      // financial credit-note record, linked back to the issue it created.
+      const [issueRow] = await sb.insert('curio_issues', {
+        item_id: form.item_id,
+        location_id: location,
+        period: toPeriod(form.date),
+        date: form.date,
+        qty: qtyNum,
+        reason: 'Returned to Supplier',
+        note: `Credit note${form.credit_note_number ? ' #' + form.credit_note_number : ''} — ${form.supplier}`,
+        company_id: companyId,
+      })
+      onIssueAdd(issueRow)
+
+      const [row] = await sb.insert('supplier_credit_notes', {
+        company_id: companyId,
+        app: 'curio',
+        location_id: location,
+        period: toPeriod(form.date),
+        item_id: form.item_id,
+        item_description: itemName(form.item_id),
+        issue_id: issueRow.id,
+        qty: qtyNum,
+        unit_cost: unitCostNum,
+        total_credit: totalCreditPreview,
+        supplier: form.supplier,
+        reason: form.reason,
+        credit_note_number: form.credit_note_number || null,
+        date: form.date,
+        notes: form.notes || null,
+        slip_id: slipId,
+      })
+      onAdd(row)
+      setForm({
+        item_id: '',
+        date: form.date,
+        qty: '',
+        unit_cost: '',
+        supplier: '',
+        reason: 'wrong_item',
+        credit_note_number: '',
+        notes: '',
+        pendingSlipBlob: null,
+        pendingSlipName: '',
+      })
+    } finally {
+      setSaving(false)
+    }
+  }
+
+  async function removeCreditNote(c) {
+    if (!window.confirm('Delete this credit note? This also reverses the stock it returned.')) return
+    await sb.remove('supplier_credit_notes', { id: c.id })
+    onRemove(c.id)
+    if (c.issue_id) {
+      await sb.remove('curio_issues', { id: c.issue_id })
+      onIssueRemove(c.issue_id)
+    }
+  }
+
+  const totalCredit = creditNotes.reduce((s, c) => s + Number(c.total_credit || 0), 0)
+
+  return (
+    <>
+      <div style={styles.card}>
+        <div style={styles.cardTitle}>Log a credit note</div>
+        <div style={{ fontSize: 12, color: colors.muted, marginBottom: 10 }}>
+          For when the wrong item was bought and has to go back to the supplier. This reduces stock
+          (as a "Returned to Supplier" issue) and records a credit against the supplier for Finance
+          Dashboard to reconcile.
+        </div>
+        <div style={styles.formGrid}>
+          <div>
+            <label style={styles.label}>Item</label>
+            <SearchableSelect
+              value={form.item_id}
+              onChange={pickItem}
+              options={items.map((it) => ({ value: it.id, label: it.name }))}
+              placeholder="Select item…"
+            />
+          </div>
+          <div>
+            <label style={styles.label}>Date</label>
+            <input type="date" style={styles.input} value={form.date} onChange={(e) => setForm({ ...form, date: e.target.value })} />
+          </div>
+          <div>
+            <label style={styles.label}>Qty returned</label>
+            <input type="number" style={styles.input} value={form.qty} onChange={(e) => setForm({ ...form, qty: e.target.value })} />
+          </div>
+          <div>
+            <label style={styles.label}>Unit cost (excl. VAT)</label>
+            <input
+              type="number"
+              style={styles.input}
+              value={form.unit_cost}
+              onChange={(e) => setForm({ ...form, unit_cost: e.target.value })}
+            />
+          </div>
+          <div>
+            <label style={styles.label}>Supplier</label>
+            <SearchableSelect
+              value={form.supplier}
+              onChange={(v) => setForm({ ...form, supplier: v })}
+              options={suppliers.map((s) => ({ value: s.name, label: s.name }))}
+              placeholder="Select supplier…"
+            />
+          </div>
+          <div>
+            <label style={styles.label}>Reason</label>
+            <select style={styles.input} value={form.reason} onChange={(e) => setForm({ ...form, reason: e.target.value })}>
+              {CREDIT_REASONS.map((r) => (
+                <option key={r.value} value={r.value}>
+                  {r.label}
+                </option>
+              ))}
+            </select>
+          </div>
+          <div>
+            <label style={styles.label}>Credit note # (if known)</label>
+            <input
+              style={styles.input}
+              value={form.credit_note_number}
+              onChange={(e) => setForm({ ...form, credit_note_number: e.target.value })}
+            />
+          </div>
+          <div>
+            <label style={styles.label}>Notes (optional)</label>
+            <input style={styles.input} value={form.notes} onChange={(e) => setForm({ ...form, notes: e.target.value })} />
+          </div>
+        </div>
+        <div style={{ marginBottom: 10 }}>
+          <label style={styles.label}>Slip / credit note photo (optional)</label>
+          <input type="file" accept="image/*" capture="environment" onChange={pickSlipFile} />
+          {form.pendingSlipName && (
+            <div style={{ fontSize: 11, color: colors.ok, marginTop: 4 }}>Attached: {form.pendingSlipName}</div>
+          )}
+        </div>
+        {qtyNum > 0 && (
+          <div style={{ fontSize: 13, color: colors.goldLt, marginBottom: 10 }}>
+            {fmt(qtyNum, 0)} × R {fmt(unitCostNum)} = R {fmt(totalCreditPreview)} credit
+          </div>
+        )}
+        <button style={styles.button} onClick={addCreditNote} disabled={saving || !form.item_id || !form.qty || !form.supplier}>
+          {saving ? 'Saving…' : 'Log credit note'}
+        </button>
+      </div>
+
+      <div style={styles.card}>
+        <div style={styles.cardTitle}>Credit notes in {period} — R {fmt(totalCredit)} total</div>
+        <div style={styles.tableWrap}>
+        <table style={styles.table}>
+          <thead>
+            <tr>
+              <th style={styles.th}>Date</th>
+              <th style={styles.th}>Item</th>
+              <th style={styles.th}>Qty</th>
+              <th style={styles.th}>Credit R</th>
+              <th style={styles.th}>Supplier</th>
+              <th style={styles.th}>Reason</th>
+              <th style={styles.th}>Credit note #</th>
+              <th style={styles.th}>Slip</th>
+              <th style={styles.th}></th>
+            </tr>
+          </thead>
+          <tbody>
+            {creditNotes.map((c) => (
+              <tr key={c.id}>
+                <td style={styles.td}>{c.date}</td>
+                <td style={styles.td}>{c.item_description}</td>
+                <td style={styles.tdNum}>{fmt(c.qty, 0)}</td>
+                <td style={styles.tdNum}>R {fmt(c.total_credit)}</td>
+                <td style={styles.td}>{c.supplier}</td>
+                <td style={styles.td}>{CREDIT_REASONS.find((r) => r.value === c.reason)?.label || c.reason}</td>
+                <td style={styles.td}>{c.credit_note_number || '—'}</td>
+                <td style={styles.td}>
+                  {c.slip_id && slips[c.slip_id] ? <ViewSlipLink storagePath={slips[c.slip_id].storage_path} /> : '—'}
+                </td>
+                <td style={styles.td}>
+                  <button style={styles.buttonDanger} onClick={() => removeCreditNote(c)}>
+                    Delete
+                  </button>
+                </td>
+              </tr>
+            ))}
+            {creditNotes.length === 0 && (
+              <tr>
+                <td style={styles.td} colSpan={9}>
+                  No credit notes logged this period.
                 </td>
               </tr>
             )}
