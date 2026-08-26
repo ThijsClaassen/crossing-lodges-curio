@@ -76,7 +76,12 @@ export function CompanyProvider({ children }) {
         }))
         .filter((c) => c.role)
         .filter((c) => {
-          if (isPlatformAdmin || c.role === 'admin') return true
+          // 2026-08-25: admin no longer unconditionally bypasses this —
+          // Thijs wants manager accounts (Company Admins) restrictable to
+          // specific apps too, same mechanism as staff. An admin with zero
+          // user_app_access rows still passes via the `!grants` fallback
+          // below, so nobody currently unrestricted loses access.
+          if (isPlatformAdmin) return true
           const grants = appAccessByCompany[c.id]
           return !grants || grants.has(APP_KEY)
         })
