@@ -1650,7 +1650,7 @@ function ItemsTab({ items, metricsByItem, location, suppliers, onAdd, onUpdate, 
           <div>
             <label style={styles.label}>Sell price (R)</label>
             <input
-              type="number"
+              type="number" inputMode="decimal"
               style={styles.input}
               value={form.sell_price}
               onChange={(e) => setForm({ ...form, sell_price: e.target.value })}
@@ -1659,7 +1659,7 @@ function ItemsTab({ items, metricsByItem, location, suppliers, onAdd, onUpdate, 
           <div>
             <label style={styles.label}>Order pack size</label>
             <input
-              type="number"
+              type="number" inputMode="decimal"
               style={styles.input}
               value={form.order_pack_size}
               onChange={(e) => setForm({ ...form, order_pack_size: e.target.value })}
@@ -1686,7 +1686,7 @@ function ItemsTab({ items, metricsByItem, location, suppliers, onAdd, onUpdate, 
           <div>
             <label style={styles.label}>Min units</label>
             <input
-              type="number"
+              type="number" inputMode="decimal"
               style={styles.input}
               value={form.min_units}
               onChange={(e) => setForm({ ...form, min_units: e.target.value })}
@@ -1695,7 +1695,7 @@ function ItemsTab({ items, metricsByItem, location, suppliers, onAdd, onUpdate, 
           <div>
             <label style={styles.label}>Max units</label>
             <input
-              type="number"
+              type="number" inputMode="decimal"
               style={styles.input}
               value={form.max_units}
               onChange={(e) => setForm({ ...form, max_units: e.target.value })}
@@ -1757,7 +1757,7 @@ function ItemsTab({ items, metricsByItem, location, suppliers, onAdd, onUpdate, 
                   <td style={styles.td}>{it.count_unit}</td>
                   <td style={styles.td}>
                     <input
-                      type="number"
+                      type="number" inputMode="decimal"
                       style={styles.smallInput}
                       defaultValue={it.sell_price ?? 0}
                       onBlur={(e) => updateItem(it.id, { sell_price: Number(e.target.value) || 0 })}
@@ -1774,7 +1774,7 @@ function ItemsTab({ items, metricsByItem, location, suppliers, onAdd, onUpdate, 
                   </td>
                   <td style={styles.td}>
                     <input
-                      type="number"
+                      type="number" inputMode="decimal"
                       style={styles.smallInput}
                       defaultValue={it.min_units}
                       onBlur={(e) => updateItem(it.id, { min_units: Number(e.target.value) })}
@@ -1782,7 +1782,7 @@ function ItemsTab({ items, metricsByItem, location, suppliers, onAdd, onUpdate, 
                   </td>
                   <td style={styles.td}>
                     <input
-                      type="number"
+                      type="number" inputMode="decimal"
                       style={styles.smallInput}
                       defaultValue={it.max_units}
                       onBlur={(e) => updateItem(it.id, { max_units: Number(e.target.value) })}
@@ -1790,7 +1790,7 @@ function ItemsTab({ items, metricsByItem, location, suppliers, onAdd, onUpdate, 
                   </td>
                   <td style={styles.td}>
                     <input
-                      type="number"
+                      type="number" inputMode="decimal"
                       style={{ ...styles.smallInput, width: 70 }}
                       defaultValue={it.order_pack_size ?? 1}
                       onBlur={(e) => updateItem(it.id, { order_pack_size: Number(e.target.value) || 1 })}
@@ -1881,7 +1881,7 @@ function OpeningTab({ items, stockByItem, metricsByItem, location, period, onSav
                 <td style={styles.td}>{it.name}</td>
                 <td style={styles.td}>
                   <input
-                    type="number"
+                    type="number" inputMode="decimal"
                     style={styles.smallInput}
                     defaultValue={sp?.opening_units ?? ''}
                     disabled={!sp || sp.closed}
@@ -1890,7 +1890,7 @@ function OpeningTab({ items, stockByItem, metricsByItem, location, period, onSav
                 </td>
                 <td style={styles.td}>
                   <input
-                    type="number"
+                    type="number" inputMode="decimal"
                     style={styles.smallInput}
                     defaultValue={sp?.opening_cost_per_unit ?? ''}
                     disabled={!sp || sp.closed}
@@ -2235,7 +2235,7 @@ function SlipScanCard({ items, suppliers, location, onApproved, companyId, onSli
               <div>
                 <label style={styles.label}>VAT rate %</label>
                 <input
-                  type="number"
+                  type="number" inputMode="decimal"
                   style={styles.input}
                   value={review.vatRate}
                   onChange={(e) => setVatRate(e.target.value)}
@@ -2292,7 +2292,7 @@ function SlipScanCard({ items, suppliers, location, onApproved, companyId, onSli
                     </td>
                     <td style={styles.td}>
                       <input
-                        type="number"
+                        type="number" inputMode="decimal"
                         style={{ ...styles.smallInput, width: 70 }}
                         value={row.qty}
                         onChange={(e) => updateRow(row.key, { qty: e.target.value })}
@@ -2300,7 +2300,7 @@ function SlipScanCard({ items, suppliers, location, onApproved, companyId, onSli
                     </td>
                     <td style={styles.td}>
                       <input
-                        type="number"
+                        type="number" inputMode="decimal"
                         style={{ ...styles.smallInput, width: 90 }}
                         value={row.total_cost}
                         onChange={(e) => updateRow(row.key, { total_cost: e.target.value })}
@@ -2523,7 +2523,7 @@ function PurchasesTab({ items, purchases, suppliers, location, period, onAdd, on
           <div>
             <label style={styles.label}>Units</label>
             <input
-              type="number"
+              type="number" inputMode="decimal"
               style={styles.input}
               value={form.units}
               onChange={(e) => setForm({ ...form, units: e.target.value })}
@@ -2532,7 +2532,7 @@ function PurchasesTab({ items, purchases, suppliers, location, period, onAdd, on
           <div>
             <label style={styles.label}>Total cost (excl. VAT)</label>
             <input
-              type="number"
+              type="number" inputMode="decimal"
               style={styles.input}
               value={form.total_cost_excl_vat}
               onChange={(e) => setForm({ ...form, total_cost_excl_vat: e.target.value })}
@@ -2688,7 +2688,7 @@ function IssuesTab({ items, issues, location, period, onAdd, onRemove, companyId
           </div>
           <div>
             <label style={styles.label}>Qty issued</label>
-            <input type="number" style={styles.input} value={form.qty} onChange={(e) => setForm({ ...form, qty: e.target.value })} />
+            <input type="number" inputMode="decimal" style={styles.input} value={form.qty} onChange={(e) => setForm({ ...form, qty: e.target.value })} />
           </div>
           <div>
             <label style={styles.label}>Reason</label>
@@ -2903,12 +2903,12 @@ function CreditNotesTab({ items, suppliers, creditNotes, metricsByItem, location
           </div>
           <div>
             <label style={styles.label}>Qty returned</label>
-            <input type="number" style={styles.input} value={form.qty} onChange={(e) => setForm({ ...form, qty: e.target.value })} />
+            <input type="number" inputMode="decimal" style={styles.input} value={form.qty} onChange={(e) => setForm({ ...form, qty: e.target.value })} />
           </div>
           <div>
             <label style={styles.label}>Unit cost (excl. VAT)</label>
             <input
-              type="number"
+              type="number" inputMode="decimal"
               style={styles.input}
               value={form.unit_cost}
               onChange={(e) => setForm({ ...form, unit_cost: e.target.value })}
@@ -3190,7 +3190,7 @@ function CountTab({ items, stockByItem, metricsByItem, location, period, role, o
                     ref={(el) => {
                       inputRefs.current[it.id] = el
                     }}
-                    type="number"
+                    type="number" inputMode="decimal"
                     style={styles.smallInput}
                     defaultValue=""
                     placeholder={sp?.closing_count_units ?? ''}
