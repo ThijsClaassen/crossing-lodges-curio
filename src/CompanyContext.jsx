@@ -47,7 +47,7 @@ export function CompanyProvider({ children }) {
         { data: adminRow, error: adminErr },
         { data: appAccessRows, error: appAccessErr },
       ] = await Promise.all([
-        supabase.from('companies').select('id, slug, name, status').order('name'),
+        supabase.from('companies').select('id, slug, name, status, member_billing_enabled').order('name'),
         supabase.from('user_companies').select('company_id, role').eq('user_id', user.id),
         supabase.from('platform_admins').select('user_id').eq('user_id', user.id).maybeSingle(),
         supabase.from('user_app_access').select('company_id, app_key').eq('user_id', user.id),
@@ -72,6 +72,7 @@ export function CompanyProvider({ children }) {
           slug: c.slug,
           name: c.name,
           status: c.status,
+          memberBillingEnabled: !!c.member_billing_enabled,
           role: roleByCompany[c.id] || (isPlatformAdmin ? 'admin' : null),
         }))
         .filter((c) => c.role)
@@ -118,6 +119,10 @@ export function CompanyProvider({ children }) {
     companyName: current?.name || '',
     companySlug: current?.slug || '',
     role: current?.role || null,
+    // Member billing is a per-company feature flag — off for every real
+    // lodge, on for the Demo company (see the Finance Dashboard's Member
+    // Accounts tab). Gates the Member Purchase card in Purchases.
+    memberBillingEnabled: !!current?.memberBillingEnabled,
     switchCompany,
     reload: load,
   }
