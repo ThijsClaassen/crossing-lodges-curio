@@ -102,11 +102,31 @@ export const sb = {
   },
 }
 
-export const LOCATIONS = [
-  { id: 'ZC', name: 'Zebras Crossing' },
-  { id: 'EC', name: 'Elephants Crossing' },
-  { id: 'SC', name: 'Schamach' },
-]
+// Lodges for the current company. Loaded from the shared `locations` table
+// at login (see CompanyContext.jsx) instead of being hardcoded, so a second
+// company's own lodges work without a code change (2026-08-26).
+//
+// Deliberately a MUTABLE module array rather than React state: this app
+// already reads LOCATIONS synchronously in a number of places, some outside
+// components, and converting every one to a hook would be a large change for
+// no visible benefit today. CompanyContext fills this in BEFORE it renders
+// any children, and refills it on company switch, so by the time anything
+// reads it, it's correct. The array identity never changes — contents are
+// replaced in place — so existing dependency arrays keep behaving as before.
+export const LOCATIONS = []
+
+// Only 'lodge' rows: the shared locations table also holds an 'overhead'
+// (head office) row that the Finance Dashboard uses for non-lodge costs and
+// that this app has never shown. Ordering is by created_at, not id, because
+// the established display order is ZC, EC, SC — which alphabetical order
+// would reshuffle to EC, SC, ZC.
+export function setLocations(rows) {
+  LOCATIONS.length = 0
+  for (const r of rows || []) {
+    if (r.type && r.type !== 'lodge') continue
+    LOCATIONS.push({ id: r.id, name: r.name, type: r.type ?? null })
+  }
+}
 
 export function currentPeriod() {
   const d = new Date()

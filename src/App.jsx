@@ -712,6 +712,15 @@ function AuthenticatedApp() {
     await supabase.auth.signOut()
   }
   const [location, setLocation] = useState('ZC')
+  // 'ZC' is only a first guess: this state initialises before the lodge list
+  // has loaded (CompanyContext fetches it), and another company won't have a
+  // lodge called ZC at all. Once LOCATIONS is populated — and again whenever
+  // it changes on a company switch — snap to the first real lodge if the
+  // current pick isn't in the list (2026-08-26).
+  useEffect(() => {
+    if (LOCATIONS.length === 0) return
+    if (!LOCATIONS.some((l) => l.id === location)) setLocation(LOCATIONS[0].id)
+  }, [companyId, location])
   const [period, setPeriod] = useState(currentPeriod())
   const [tab, setTab] = useState('dashboard')
   const [menuOpen, setMenuOpen] = useState(false)
