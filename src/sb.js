@@ -48,56 +48,91 @@ async function handle(res) {
   return text ? JSON.parse(text) : null
 }
 
+// Transient clock-skew retry (2026-08-26).
+//
+// Supabase sometimes rejects a perfectly valid token with PGRST303 ("JWT
+// issued at future"): its Auth service mints the token using one node's
+// clock, PostgREST validates it against another, and if Auth is a second or
+// two ahead the token looks like it hasn't been issued yet. It's transient,
+// server-side, and nothing to do with this app or the user's device — the
+// same request succeeds moments later.
+//
+// So: retry once after a short pause, then let the error surface normally.
+// Deliberately NOT "fixed" by adding clock leeway or skipping iat
+// verification — that's a real signature check, and weakening it to paper
+// over infrastructure drift would weaken auth for every user. If this starts
+// happening a lot, the actual fix is a Supabase support ticket, not more
+// retries here.
+const CLOCK_SKEW_RETRY_MS = 1500
+
+async function isClockSkewError(res) {
+  if (res.ok) return false
+  try {
+    const body = await res.clone().text()
+    return body.includes('PGRST303') || body.includes('JWT issued at future')
+  } catch {
+    return false
+  }
+}
+
+// buildInit is a function, not an object, so the retry rebuilds its headers
+// and picks up a refreshed access token if the client rotated one meanwhile.
+async function sbFetch(url, buildInit) {
+  let res = await fetch(url, await buildInit())
+  if (await isClockSkewError(res)) {
+    await new Promise((r) => setTimeout(r, CLOCK_SKEW_RETRY_MS))
+    res = await fetch(url, await buildInit())
+  }
+  return res
+}
+
 export const sb = {
   // select('curio_items', { location_id: 'ZC' }, { select: '*', order: 'name.asc' })
   async select(table, filters = {}, opts = {}) {
     const params = { ...filters }
     if (opts.select) params.select = opts.select
     if (opts.order) params.order = opts.order
-    const res = await fetch(`${REST}/${table}${qs(params)}`, {
+    const res = await sbFetch(`${REST}/${table}${qs(params)}`, async () => ({
       headers: await headers(),
-    })
+    }))
     return handle(res)
   },
 
   async insert(table, rows) {
-    const res = await fetch(`${REST}/${table}`, {
+    const res = await sbFetch(`${REST}/${table}`, async () => ({
       method: 'POST',
       headers: await headers({ Prefer: 'return=representation' }),
       body: JSON.stringify(Array.isArray(rows) ? rows : [rows]),
-    })
+    }))
     return handle(res)
   },
 
   // upsert on a unique constraint, e.g. onConflict = 'item_id,period'
   async upsert(table, rows, onConflict) {
-    const res = await fetch(
-      `${REST}/${table}?on_conflict=${encodeURIComponent(onConflict)}`,
-      {
+    const res = await sbFetch(`${REST}/${table}?on_conflict=${encodeURIComponent(onConflict)}`, async () => ({
         method: 'POST',
         headers: await headers({
           Prefer: 'resolution=merge-duplicates,return=representation',
         }),
         body: JSON.stringify(Array.isArray(rows) ? rows : [rows]),
-      }
-    )
+      }))
     return handle(res)
   },
 
   async update(table, filters, patch) {
-    const res = await fetch(`${REST}/${table}${qs(filters)}`, {
+    const res = await sbFetch(`${REST}/${table}${qs(filters)}`, async () => ({
       method: 'PATCH',
       headers: await headers({ Prefer: 'return=representation' }),
       body: JSON.stringify(patch),
-    })
+    }))
     return handle(res)
   },
 
   async remove(table, filters) {
-    const res = await fetch(`${REST}/${table}${qs(filters)}`, {
+    const res = await sbFetch(`${REST}/${table}${qs(filters)}`, async () => ({
       method: 'DELETE',
       headers: await headers({ Prefer: 'return=representation' }),
-    })
+    }))
     return handle(res)
   },
 }
