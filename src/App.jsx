@@ -1600,6 +1600,82 @@ function SearchableSelect({ value, onChange, options, placeholder = 'Select…',
 // Items tab — manage the curio shop master list for the selected lodge
 // ---------------------------------------------------------------------------
 
+// Pick an existing category, or add a new one — the same "dropdown of what's
+// already in use" pattern as Position and Department in the HR app.
+//
+// Why this replaced a plain text box (2026-08-31): category was free text with
+// no constraint, and it drifted into SIX spellings of one thing —
+// 'Meats / Fish', 'Meats / fish', 'Meat / fish', 'Meat/Fish', 'Meat-Fish' and
+// plain 'Meat' — plus 'Fruits/Veg' alongside 'Fresh and Veg'. Each typo became
+// its own group in the pickers and reports, and the duplicates were nearly
+// invisible because the difference was a space or a capital letter.
+//
+// One improvement over the HR version: confirming a new name SNAPS to an
+// existing category when the two differ only by case, spacing or punctuation.
+// Trimming alone would not have prevented the mess above — someone typing
+// "meats/fish" would still have created a seventh spelling. Here they get the
+// existing 'Meats / Fish' instead, without having to notice.
+function CategoryPicker({ value, options, onChange, inputStyle }) {
+  const [adding, setAdding] = useState(false)
+  const [text, setText] = useState('')
+  const style = inputStyle || styles.input
+
+  function confirm() {
+    const typed = text.trim()
+    if (typed) {
+      const norm = (s) => s.toLowerCase().replace(/[^a-z0-9]/g, '')
+      const existing = options.find((o) => norm(o) === norm(typed))
+      onChange(existing || typed)
+    }
+    setAdding(false)
+    setText('')
+  }
+
+  if (adding) {
+    return (
+      <div style={{ ...styles.row, gap: 4 }}>
+        <input
+          autoFocus
+          style={style}
+          placeholder="New category name"
+          value={text}
+          onChange={(e) => setText(e.target.value)}
+          onKeyDown={(e) => {
+            if (e.key === 'Enter') { e.preventDefault(); confirm() }
+            if (e.key === 'Escape') { setAdding(false); setText('') }
+          }}
+        />
+        <button style={styles.buttonGhost} onClick={confirm} type="button">Use</button>
+        <button style={styles.buttonGhost} onClick={() => { setAdding(false); setText('') }} type="button">
+          Cancel
+        </button>
+      </div>
+    )
+  }
+
+  return (
+    <select
+      style={style}
+      value={value || ''}
+      onChange={(e) => {
+        if (e.target.value === '__new__') setAdding(true)
+        else onChange(e.target.value)
+      }}
+    >
+      <option value="">No category set</option>
+      {options.map((c) => (
+        <option key={c} value={c}>{c}</option>
+      ))}
+      {/* An item whose category was set before this picker existed must still
+          show its own value, even if nothing else uses that category any
+          more — otherwise the dropdown would silently render blank and the
+          next save would wipe a perfectly good category. */}
+      {value && !options.includes(value) && <option value={value}>{value}</option>}
+      <option value="__new__">+ Add new category…</option>
+    </select>
+  )
+}
+
 function ItemsTab({ items, metricsByItem, location, suppliers, onAdd, onUpdate, onRemove, companyId }) {
   const [form, setForm] = useState({
     name: '',
@@ -1613,6 +1689,15 @@ function ItemsTab({ items, metricsByItem, location, suppliers, onAdd, onUpdate, 
     order_pack_label: '',
   })
   const [saving, setSaving] = useState(false)
+
+  // Not a fixed list — whatever's already in use, plus whatever is currently
+  // picked, so the dropdown never renders blank right after adding a new one.
+  const categoryOptions = useMemo(() => {
+    const set = new Set()
+    for (const it of items) if (it.category) set.add(it.category)
+    if (form.category) set.add(form.category)
+    return Array.from(set).sort()
+  }, [items, form.category])
 
   async function addItem() {
     if (!form.name.trim()) return
@@ -1662,11 +1747,10 @@ function ItemsTab({ items, metricsByItem, location, suppliers, onAdd, onUpdate, 
           </div>
           <div>
             <label style={styles.label}>Category</label>
-            <input
-              style={styles.input}
-              placeholder="e.g. Gifts, Clothing, Jewellery"
+            <CategoryPicker
               value={form.category}
-              onChange={(e) => setForm({ ...form, category: e.target.value })}
+              options={categoryOptions}
+              onChange={(v) => setForm({ ...form, category: v })}
             />
           </div>
           <div>
@@ -1769,7 +1853,16 @@ function ItemsTab({ items, metricsByItem, location, suppliers, onAdd, onUpdate, 
               return (
                 <tr key={it.id}>
                   <td style={styles.td}>{it.name}</td>
-                  <td style={styles.td}>{it.category}</td>
+                  <td style={styles.td}>
+                    {/* Was read-only, so a category typed wrongly at creation
+                        could only be corrected with SQL. Editable now. */}
+                    <CategoryPicker
+                      value={it.category}
+                      options={categoryOptions}
+                      onChange={(v) => updateItem(it.id, { category: v })}
+                      inputStyle={{ ...styles.smallInput, width: 150 }}
+                    />
+                  </td>
                   <td style={styles.td}>
                     <SearchableSelect
                       value={it.supplier_id || ''}
