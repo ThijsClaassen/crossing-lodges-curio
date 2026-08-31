@@ -8,6 +8,7 @@ import SetPassword from './SetPassword.jsx'
 import { CompanyProvider, useCompany } from './CompanyContext.jsx'
 import { uploadPurchaseSlip, getSlipUrl } from './slipUpload.js'
 import { syncYocoSales, learnYocoItemMatch } from './curioSalesEngine.js'
+import { transferEffect, incomingTransfers, outstandingSent, daysInTransit } from './transferEngine.js'
 import {
   listMembers as listBillingMembers,
   logMemberPurchase,
@@ -70,6 +71,11 @@ function prevPeriod(period) {
 
 function toPeriod(dateStr) {
   return dateStr ? dateStr.slice(0, 7) : currentPeriod()
+}
+
+// ISO yyyy-mm-dd for <input type="date">, which rejects anything else.
+function todayISO() {
+  return new Date().toISOString().slice(0, 10)
 }
 
 function fmt(n, decimals = 2) {
@@ -200,7 +206,9 @@ const CREDIT_REASONS = [
   { value: 'other', label: 'Other' },
 ]
 
-function computeMetrics(item, stockPeriod, itemPurchases, itemIssues) {
+const NO_TRANSFERS = { sentOut: 0, receivedIn: 0, inTransitOut: 0, inTransitIn: 0, sentValue: 0, receivedValue: 0, netUnits: 0, netValue: 0 }
+
+function computeMetrics(item, stockPeriod, itemPurchases, itemIssues, tx = NO_TRANSFERS) {
   const opening = stockPeriod?.opening_units ?? 0
   const openingCost = stockPeriod?.opening_cost_per_unit ?? 0
   const purchaseUnits = itemPurchases.reduce((s, p) => s + Number(p.units || 0), 0)
@@ -215,16 +223,27 @@ function computeMetrics(item, stockPeriod, itemPurchases, itemIssues) {
     .reduce((s, i) => s + Number(i.qty || 0), 0)
   const writeOffUnits = issuedTotal - soldUnits
 
+  // Stock received from another lodge arrives WITH its cost (the sender's
+  // weighted average, snapshotted at send time), so it belongs in the average
+  // alongside purchases. Stock sent away is a disposal like an issue —
+  // removing units at the average leaves the average unchanged, which is why
+  // sentOut appears nowhere here.
   const weightedAvgCost =
-    opening + purchaseUnits > 0
-      ? (opening * openingCost + purchaseCost) / (opening + purchaseUnits)
+    opening + purchaseUnits + tx.receivedIn > 0
+      ? (opening * openingCost + purchaseCost + tx.receivedValue) /
+        (opening + purchaseUnits + tx.receivedIn)
       : openingCost
 
   const soldValue = soldUnits * weightedAvgCost
   const writeOffValue = writeOffUnits * weightedAvgCost
   const sellThroughValue = soldUnits * Number(item.sell_price || 0)
 
-  const theoreticalClosing = opening + purchaseUnits - issuedTotal
+  // Transfers move real stock, so they belong in expected closing — otherwise
+  // sending a case to another lodge would show up on the Count as shrinkage.
+  // netUnits is received minus sent, negative for a net sender. This keeps
+  // transfers OUT of write-offs and out of variance: a legitimate movement
+  // must never look like waste or theft.
+  const theoreticalClosing = opening + purchaseUnits - issuedTotal + tx.netUnits
   const closingCount = stockPeriod?.closing_count_units
   const hasCount = closingCount !== null && closingCount !== undefined
   const varianceUnits = hasCount ? closingCount - theoreticalClosing : null
@@ -632,6 +651,9 @@ const styles = {
   }),
 }
 
+// Which slice of stock_transfers belongs to this app.
+const DOMAIN = 'curio'
+
 const ADMIN_TABS = [
   { id: 'dashboard', label: 'Dashboard' },
   { id: 'items', label: 'Items' },
@@ -641,6 +663,7 @@ const ADMIN_TABS = [
   { id: 'issues', label: 'Issues' },
   { id: 'count', label: 'Count' },
   { id: 'variance', label: 'Variance' },
+  { id: 'transfers', label: 'Transfers' },
   { id: 'orders', label: 'Orders' },
   { id: 'yoco', label: 'Yoco Sync' },
 ]
@@ -731,6 +754,7 @@ function AuthenticatedApp() {
   const [issues, setIssues] = useState([])
   const [suppliers, setSuppliers] = useState([])
   const [creditNotes, setCreditNotes] = useState([])
+  const [transfers, setTransfers] = useState([])
   const [error, setError] = useState(null)
   // Purchase slip photos — keyed by purchase_slips.id, loaded company-wide
   // (not period-filtered, since a slip photo isn't tied to a reporting
@@ -760,6 +784,10 @@ function AuthenticatedApp() {
         sb.select('curio_issues', { location_id: location, period, company_id: companyId }, { order: 'date.asc' }),
         sb.select('curio_suppliers', { location_id: location, active: true, company_id: companyId }, { order: 'name.asc' }),
         sb.select('supplier_credit_notes', { company_id: companyId, location_id: location, app: 'curio', period }, { order: 'date.asc' }),
+        // Not filtered by location on purpose: an incoming transfer has
+        // from_location_id = the other lodge, so a location filter would hide
+        // exactly the rows this lodge has to confirm.
+        sb.select('stock_transfers', { company_id: companyId, domain: DOMAIN }, { order: 'sent_date.desc' }),
         sb.select('purchase_slips', { company_id: companyId, app: 'curio' }, {}),
       ])
       setItems(itemsRes || [])
@@ -768,6 +796,7 @@ function AuthenticatedApp() {
       setIssues(issRes || [])
       setSuppliers(supRes || [])
       setCreditNotes(cnRes || [])
+      setTransfers(txRes || [])
       const slipMap = {}
       ;(slipRes || []).forEach((s) => { slipMap[s.id] = s })
       setSlips(slipMap)
@@ -875,11 +904,12 @@ function AuthenticatedApp() {
         item,
         stockByItem[item.id],
         purchasesByItem[item.id] || [],
-        issuesByItem[item.id] || []
+        issuesByItem[item.id] || [],
+        transferEffect(transfers, { domain: DOMAIN, locationId: location, itemId: item.id })
       )
     }
     return map
-  }, [items, stockByItem, purchasesByItem, issuesByItem])
+  }, [items, stockByItem, purchasesByItem, issuesByItem, transfers, location])
 
   const periodStarted = items.length > 0 && items.every((it) => stockByItem[it.id])
   const periodPartiallyStarted =
@@ -1201,6 +1231,16 @@ function AuthenticatedApp() {
                 metricsByItem={metricsByItem}
                 allClosed={allClosed}
                 onClosePeriod={closePeriod}
+              />
+            )}
+            {activeTab === 'transfers' && role === 'admin' && (
+              <TransfersTab
+                items={items}
+                metricsByItem={metricsByItem}
+                transfers={transfers}
+                location={location}
+                companyId={companyId}
+                onChanged={loadAll}
               />
             )}
             {activeTab === 'orders' && role === 'admin' && (
@@ -1673,6 +1713,304 @@ function CategoryPicker({ value, options, onChange, inputStyle }) {
       {value && !options.includes(value) && <option value={value}>{value}</option>}
       <option value="__new__">+ Add new category…</option>
     </select>
+  )
+}
+
+// Transfers tab — move stock between lodges without it looking like waste,
+// a purchase, or shrinkage. See src/transferEngine.js for why this is its own
+// movement type rather than a paired issue + purchase.
+//
+// Two-step by design: the sender logs it, the receiving lodge confirms what
+// actually arrived. The gap between the two is the point — a case of wine that
+// leaves EC and never reaches ZC shows up here as an ageing open transfer,
+// instead of silently becoming stock ZC does not have.
+function TransfersTab({ items, metricsByItem, transfers, location, companyId, onChanged }) {
+  const [form, setForm] = useState({ item_id: '', qty: '', to: '', date: todayISO(), notes: '' })
+  const [saving, setSaving] = useState(false)
+  const [status, setStatus] = useState('')
+  // Keyed by transfer id so two people confirming different rows don't collide.
+  const [receiveQty, setReceiveQty] = useState({})
+
+  const otherLodges = LOCATIONS.filter((l) => l.id !== location)
+  const lodgeName = (id) => LOCATIONS.find((l) => l.id === id)?.name || id
+  const itemName = (id) => items.find((i) => i.id === id)?.name || '(item removed)'
+
+  const incoming = useMemo(
+    () => incomingTransfers(transfers, { domain: DOMAIN, locationId: location }), [transfers, location])
+  const awaiting = useMemo(
+    () => outstandingSent(transfers, { domain: DOMAIN, locationId: location }), [transfers, location])
+  const history = useMemo(
+    () => (transfers || [])
+      .filter((t) => t.domain === DOMAIN && t.status !== 'in_transit' &&
+        (t.from_location_id === location || t.to_location_id === location))
+      .sort((a, b) => String(b.sent_date || '').localeCompare(String(a.sent_date || ''))),
+    [transfers, location])
+
+  // Cost is shown, never typed. It's the sending lodge's weighted average, so
+  // the value follows the goods and the group total doesn't move.
+  const selected = items.find((i) => i.id === form.item_id)
+  const unitCost = form.item_id ? (metricsByItem[form.item_id]?.weightedAvgCost || 0) : 0
+  const onHand = form.item_id ? (metricsByItem[form.item_id]?.theoreticalClosing ?? 0) : 0
+  const qtyNum = Number(form.qty) || 0
+  const overSend = qtyNum > onHand
+
+  async function send() {
+    if (!form.item_id || !form.to || qtyNum <= 0) {
+      setStatus('Pick an item, a destination lodge and a quantity.')
+      return
+    }
+    setSaving(true); setStatus('')
+    try {
+      await sb.insert('stock_transfers', [{
+        company_id: companyId,
+        domain: DOMAIN,
+        from_location_id: location,
+        to_location_id: form.to,
+        item_id: form.item_id,
+        item_name: itemName(form.item_id),
+        qty: qtyNum,
+        unit_cost: unitCost,
+        total_value: qtyNum * unitCost,
+        sent_date: form.date,
+        status: 'in_transit',
+        notes: form.notes || null,
+      }])
+      setForm({ item_id: '', qty: '', to: '', date: todayISO(), notes: '' })
+      setStatus(`Sent to ${lodgeName(form.to)} — it will only count as their stock once they confirm it arrived.`)
+      onChanged?.()
+    } catch (e) {
+      setStatus(`Could not send: ${e.message}`)
+    } finally { setSaving(false) }
+  }
+
+  async function confirmReceipt(t) {
+    const raw = receiveQty[t.id]
+    const got = raw === '' || raw === undefined ? Number(t.qty) : Number(raw)
+    if (!(got >= 0)) { setStatus('Received quantity must be zero or more.'); return }
+    setSaving(true); setStatus('')
+    try {
+      await sb.update('stock_transfers', { id: t.id }, {
+        status: 'received',
+        received_date: todayISO(),
+        received_qty: got,
+      })
+      const short = Number(t.qty) - got
+      setStatus(short > 0
+        ? `Received ${got} of ${t.qty}. The ${short} short is left showing as a loss in transit — it has not been written off anywhere.`
+        : 'Receipt confirmed — now counted in this lodge’s stock.')
+      setReceiveQty((m) => ({ ...m, [t.id]: undefined }))
+      onChanged?.()
+    } catch (e) {
+      setStatus(`Could not confirm: ${e.message}`)
+    } finally { setSaving(false) }
+  }
+
+  async function cancel(t) {
+    setSaving(true); setStatus('')
+    try {
+      // Cancelling returns the stock to the sender, because a cancelled
+      // transfer means it never left. Use this only if it genuinely didn't go.
+      await sb.update('stock_transfers', { id: t.id }, { status: 'cancelled' })
+      setStatus('Cancelled — the stock stays with the sending lodge.')
+      onChanged?.()
+    } catch (e) {
+      setStatus(`Could not cancel: ${e.message}`)
+    } finally { setSaving(false) }
+  }
+
+  return (
+    <>
+      <div style={styles.card}>
+        <div style={styles.cardTitle}>Send stock to another lodge</div>
+        <div style={{ fontSize: 12, color: colors.muted, marginBottom: 10 }}>
+          This is not an issue and not a write-off. The stock leaves this lodge straight away and
+          arrives at the other one only when someone there confirms it — so anything that goes
+          missing on the way stays visible instead of quietly disappearing.
+        </div>
+        <div style={styles.formGrid}>
+          <div>
+            <label style={styles.label}>Item</label>
+            <SearchableSelect
+              value={form.item_id}
+              onChange={(v) => setForm({ ...form, item_id: v })}
+              options={items.map((it) => ({ value: it.id, label: `${it.name} (${it.count_unit})` }))}
+              placeholder="Select item…"
+            />
+          </div>
+          <div>
+            <label style={styles.label}>To lodge</label>
+            <select style={styles.input} value={form.to} onChange={(e) => setForm({ ...form, to: e.target.value })}>
+              <option value="">Select lodge…</option>
+              {otherLodges.map((l) => <option key={l.id} value={l.id}>{l.name}</option>)}
+            </select>
+          </div>
+          <div>
+            <label style={styles.label}>Quantity {selected ? `(${selected.count_unit})` : ''}</label>
+            <input type="number" inputMode="decimal" style={styles.input}
+              value={form.qty} onChange={(e) => setForm({ ...form, qty: e.target.value })} />
+            {form.item_id && (
+              <div style={{ fontSize: 11, color: overSend ? colors.danger : colors.muted, marginTop: 2 }}>
+                {overSend
+                  ? `Only ${fmt(onHand, 2)} expected on hand here — check before sending.`
+                  : `${fmt(onHand, 2)} expected on hand here`}
+              </div>
+            )}
+          </div>
+          <div>
+            <label style={styles.label}>Date sent</label>
+            <input type="date" style={styles.input} value={form.date}
+              onChange={(e) => setForm({ ...form, date: e.target.value })} />
+          </div>
+          <div>
+            <label style={styles.label}>Notes</label>
+            <input style={styles.input} value={form.notes}
+              onChange={(e) => setForm({ ...form, notes: e.target.value })} placeholder="e.g. sent with Tuesday town trip" />
+          </div>
+        </div>
+        {form.item_id && (
+          <div style={{ fontSize: 12, color: colors.muted, marginTop: 8 }}>
+            Value moving: <strong>R {fmt(qtyNum * unitCost)}</strong> at R {fmt(unitCost)} per{' '}
+            {selected?.count_unit || 'unit'} — this lodge’s weighted average cost. The cost travels with
+            the goods, so the group total doesn’t change.
+          </div>
+        )}
+        <div style={{ marginTop: 10 }}>
+          <button style={styles.button} onClick={send} disabled={saving}>
+            {saving ? 'Saving…' : 'Send'}
+          </button>
+        </div>
+        {status && <div style={{ fontSize: 12, marginTop: 8 }}>{status}</div>}
+      </div>
+
+      <div style={styles.card}>
+        <div style={styles.cardTitle}>Incoming — waiting for you to confirm ({incoming.length})</div>
+        {incoming.length === 0 ? (
+          <div style={{ fontSize: 12, color: colors.muted }}>Nothing on its way here.</div>
+        ) : (
+          <div style={styles.tableWrap}>
+            <table style={styles.table}>
+              <thead><tr>
+                <th style={styles.th}>Sent</th><th style={styles.th}>From</th><th style={styles.th}>Item</th>
+                <th style={styles.th}>Sent qty</th><th style={styles.th}>Actually received</th><th style={styles.th}></th>
+              </tr></thead>
+              <tbody>
+                {incoming.map((t) => {
+                  const days = daysInTransit(t)
+                  return (
+                    <tr key={t.id}>
+                      <td style={styles.td}>
+                        {t.sent_date}
+                        {days > 3 && (
+                          <div style={{ fontSize: 10, color: colors.danger }}>{days} days ago</div>
+                        )}
+                      </td>
+                      <td style={styles.td}>{lodgeName(t.from_location_id)}</td>
+                      <td style={styles.td}>{t.item_name || itemName(t.item_id)}</td>
+                      <td style={styles.td}>{fmt(t.qty, 2)}</td>
+                      <td style={styles.td}>
+                        {/* Defaults to the sent quantity, so confirming in full
+                            is one tap — but a short arrival can be recorded
+                            honestly instead of being rounded up. */}
+                        <input type="number" inputMode="decimal"
+                          style={{ ...styles.smallInput, width: 90 }}
+                          placeholder={String(t.qty)}
+                          value={receiveQty[t.id] ?? ''}
+                          onChange={(e) => setReceiveQty((m) => ({ ...m, [t.id]: e.target.value }))} />
+                      </td>
+                      <td style={styles.td}>
+                        <button style={styles.button} onClick={() => confirmReceipt(t)} disabled={saving}>Confirm</button>{' '}
+                        <button style={styles.buttonGhost} onClick={() => cancel(t)} disabled={saving}>Never sent</button>
+                      </td>
+                    </tr>
+                  )
+                })}
+              </tbody>
+            </table>
+          </div>
+        )}
+      </div>
+
+      <div style={styles.card}>
+        <div style={styles.cardTitle}>Sent from here, not yet confirmed ({awaiting.length})</div>
+        <div style={{ fontSize: 12, color: colors.muted, marginBottom: 8 }}>
+          This stock has already left this lodge. Anything sitting here for more than a few days
+          means it left and nobody has said it arrived — worth a phone call.
+        </div>
+        {awaiting.length === 0 ? (
+          <div style={{ fontSize: 12, color: colors.muted }}>Nothing outstanding.</div>
+        ) : (
+          <div style={styles.tableWrap}>
+            <table style={styles.table}>
+              <thead><tr>
+                <th style={styles.th}>Sent</th><th style={styles.th}>To</th><th style={styles.th}>Item</th>
+                <th style={styles.th}>Qty</th><th style={styles.th}>Value</th><th style={styles.th}>Waiting</th>
+              </tr></thead>
+              <tbody>
+                {awaiting.map((t) => {
+                  const days = daysInTransit(t)
+                  return (
+                    <tr key={t.id}>
+                      <td style={styles.td}>{t.sent_date}</td>
+                      <td style={styles.td}>{lodgeName(t.to_location_id)}</td>
+                      <td style={styles.td}>{t.item_name || itemName(t.item_id)}</td>
+                      <td style={styles.td}>{fmt(t.qty, 2)}</td>
+                      <td style={styles.td}>R {fmt(t.total_value)}</td>
+                      <td style={{ ...styles.td, color: days > 3 ? colors.danger : colors.muted }}>
+                        {days} day{days === 1 ? '' : 's'}
+                      </td>
+                    </tr>
+                  )
+                })}
+              </tbody>
+            </table>
+          </div>
+        )}
+      </div>
+
+      <div style={styles.card}>
+        <div style={styles.cardTitle}>{`Transfer history (${history.length})`}</div>
+        {history.length === 0 ? (
+          <div style={{ fontSize: 12, color: colors.muted }}>Nothing yet.</div>
+        ) : (
+          <div style={styles.tableWrap}>
+            <table style={styles.table}>
+              <thead><tr>
+                <th style={styles.th}>Sent</th><th style={styles.th}>From</th><th style={styles.th}>To</th>
+                <th style={styles.th}>Item</th><th style={styles.th}>Sent</th><th style={styles.th}>Received</th>
+                <th style={styles.th}>Value</th><th style={styles.th}>Status</th>
+              </tr></thead>
+              <tbody>
+                {history.map((t) => {
+                  const short = t.status === 'received' && t.received_qty != null
+                    ? Number(t.qty) - Number(t.received_qty) : 0
+                  return (
+                    <tr key={t.id}>
+                      <td style={styles.td}>{t.sent_date}</td>
+                      <td style={styles.td}>{lodgeName(t.from_location_id)}</td>
+                      <td style={styles.td}>{lodgeName(t.to_location_id)}</td>
+                      <td style={styles.td}>{t.item_name || itemName(t.item_id)}</td>
+                      <td style={styles.td}>{fmt(t.qty, 2)}</td>
+                      <td style={styles.td}>
+                        {t.status === 'received' ? fmt(t.received_qty ?? t.qty, 2) : '—'}
+                        {short > 0 && (
+                          <div style={{ fontSize: 10, color: colors.danger }}>{fmt(short, 2)} short</div>
+                        )}
+                      </td>
+                      <td style={styles.td}>R {fmt(t.total_value)}</td>
+                      <td style={styles.td}>
+                        <span style={styles.badge(t.status === 'received' ? 'good' : 'bad')}>
+                          {t.status === 'received' ? 'Received' : 'Cancelled'}
+                        </span>
+                      </td>
+                    </tr>
+                  )
+                })}
+              </tbody>
+            </table>
+          </div>
+        )}
+      </div>
+    </>
   )
 }
 
