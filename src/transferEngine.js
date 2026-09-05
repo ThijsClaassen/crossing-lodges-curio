@@ -91,6 +91,40 @@ export function transferEffect(transfers, { domain, locationId, itemId = null })
 }
 
 /**
+ * Same as transferEffect, but as at a point in time — used to reconstruct what
+ * stock SHOULD have been on a past date.
+ *
+ * The dates are deliberately asymmetric, matching the two-step model: stock
+ * counts as gone from the sender on `sent_date`, but only counts as arrived at
+ * the receiver on `received_date`. Using sent_date for both would credit the
+ * receiver with stock before it physically got there, which is exactly the
+ * error the receive step exists to prevent.
+ *
+ * A transfer still in transit on the date in question is already out of the
+ * sender's stock and not yet in the receiver's — correct, and the reason
+ * in-transit fuel or liquor belongs to neither tank on a historical count.
+ */
+export function transferEffectAsOf(transfers, { domain, locationId, itemId = null, asOf }) {
+  const upto = (d) => d != null && String(d) <= String(asOf)
+  let sentOut = 0
+  let receivedIn = 0
+
+  for (const t of transfers || []) {
+    if (t.domain !== domain) continue
+    if (t.status === 'cancelled') continue
+    if (itemId != null && t.item_id !== itemId) continue
+
+    if (t.from_location_id === locationId && upto(t.sent_date)) {
+      sentOut += n(t.qty)
+    }
+    if (t.to_location_id === locationId && t.status === 'received' && upto(t.received_date)) {
+      receivedIn += t.received_qty == null ? n(t.qty) : n(t.received_qty)
+    }
+  }
+  return { sentOut, receivedIn, netUnits: receivedIn - sentOut }
+}
+
+/**
  * Transfers that this lodge still needs to confirm receipt of.
  * Drives the "incoming" list — the only place a short arrival can be caught.
  */

@@ -436,8 +436,12 @@ const styles = {
   content: { padding: 14, maxWidth: 1100, margin: '0 auto', boxSizing: 'border-box' },
   card: {
     background: colors.panel,
-    border: `1px solid ${colors.border}`,
-    borderRadius: 12,
+    // --card-border resolves to a hairline on dark and to transparent on
+    // light, where the shadow does the work instead. An inline style can't
+    // express a per-mode rule, which is why this is a token.
+    border: '1px solid var(--card-border)',
+    borderRadius: 'var(--radius-md)',
+    boxShadow: 'var(--shadow-md)',
     padding: 14,
     marginBottom: 12,
     maxWidth: '100%',
