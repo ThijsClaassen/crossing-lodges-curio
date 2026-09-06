@@ -55,6 +55,20 @@ export const colors = {
 
 
 
+  // Categorical chart colours. Series tokens rather than the accent, so a
+
+
+
+
+
+
+  // lodge colour can never be mistaken for a status or for the brand.
+
+
+
+
+
+
   loc: { ZC: 'var(--series-1)', EC: 'var(--series-2)', SC: 'var(--series-3)' },
 }
 
@@ -273,7 +287,7 @@ export const css = `
    ends and the next begins. Giving each its own inset tile does that work
    instead.
 
-   Note `.kpi-row > div`: the children are styled by POSITION rather than by
+   Note ".kpi-row > div": the children are styled by POSITION rather than by
    class. That means converting a stat row is a one-line change to the
    wrapper, instead of adding a className to every number in seven apps —
    far fewer edits, and none of them can be half-done. Ops and Maintenance
