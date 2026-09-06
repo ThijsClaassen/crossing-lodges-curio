@@ -54,7 +54,7 @@ export function CompanyProvider({ children }) {
         { data: adminRow, error: adminErr },
         { data: appAccessRows, error: appAccessErr },
       ] = await Promise.all([
-        supabase.from('companies').select('id, slug, name, status, member_billing_enabled, theme_accent, theme_mode').order('name'),
+        supabase.from('companies').select('id, slug, name, status, member_billing_enabled').order('name'),
         supabase.from('user_companies').select('company_id, role').eq('user_id', user.id),
         supabase.from('platform_admins').select('user_id').eq('user_id', user.id).maybeSingle(),
         supabase.from('user_app_access').select('company_id, app_key').eq('user_id', user.id),
@@ -73,6 +73,21 @@ export function CompanyProvider({ children }) {
         appAccessByCompany[row.company_id].add(row.app_key)
       }
 
+      // Branding is fetched on its own and allowed to fail. These columns
+      // arrive with add_company_theming.sql; before that migration runs, an
+      // unknown column is a hard 400 from PostgREST and would take the whole
+      // app down for the sake of an accent colour. Falling back to the product
+      // default is the same thing "no accent configured" already means.
+      let themeByCompany = {}
+      try {
+        const { data: themeRows } = await supabase.from('companies').select('id, theme_accent, theme_mode')
+        for (const t of themeRows || []) {
+          themeByCompany[t.id] = { accent: t.theme_accent || null, mode: t.theme_mode || 'light' }
+        }
+      } catch {
+        themeByCompany = {}
+      }
+
       const available = (companies || [])
         .map((c) => ({
           id: c.id,
@@ -81,8 +96,8 @@ export function CompanyProvider({ children }) {
           status: c.status,
           // White-label branding: one accent, one default mode. Null accent
           // means "use the product default".
-          themeAccent: c.theme_accent || null,
-          themeMode: c.theme_mode || 'light',
+          themeAccent: themeByCompany[c.id]?.accent ?? null,
+          themeMode: themeByCompany[c.id]?.mode ?? 'light',
           memberBillingEnabled: !!c.member_billing_enabled,
           role: roleByCompany[c.id] || (isPlatformAdmin ? 'admin' : null),
         }))

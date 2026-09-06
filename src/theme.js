@@ -74,8 +74,8 @@ export const colors = {
 
 export const fonts = {
   body: "'Inter', -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif",
-  heading: "'Cormorant Garamond', serif",
-  mono: "'Space Mono', monospace",
+  heading: "'Inter', system-ui, -apple-system, sans-serif",
+  mono: "'Inter', system-ui, -apple-system, sans-serif",
 }
 
 // Left-sidebar shell CSS (2026-08-17) — ports the Ops/Maintenance app's
@@ -363,7 +363,7 @@ export const css = `
      desktop sidebar, so they're still reachable once the sidebar hides on
      mobile. */
   .topbar{display:flex;flex-wrap:wrap;background:${colors.panel};border-bottom:1px solid ${colors.border};padding:14px 20px;align-items:center;justify-content:space-between;position:sticky;top:0;z-index:10;gap:12px}
-  .page-title{font-family:'Cormorant Garamond',serif;font-size:20px;font-weight:600;color:${colors.cream};letter-spacing:.02em;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+  .page-title{font-family:'Inter',sans-serif;font-size:20px;font-weight:600;color:${colors.cream};letter-spacing:.02em;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
   .topbar-select{background:rgba(0,0,0,.25);border:1px solid ${colors.border};border-radius:6px;padding:5px 8px;color:${colors.cream};font-family:'Inter',sans-serif;font-size:12px}
   .topbar-select option{background:${colors.panel}}
   .topbar-signout{background:none;border:1px solid ${colors.border};border-radius:6px;color:${colors.muted};font-size:11px;font-weight:600;cursor:pointer;padding:5px 10px;flex-shrink:0}
