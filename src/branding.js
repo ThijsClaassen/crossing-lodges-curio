@@ -32,7 +32,14 @@ export const SURFACE = { dark: '#1A1F26', light: '#FFFFFF' }
 // perfectly on a white panel and disappears entirely on this. So one client
 // hex produces TWO safe variants, --accent (for panels) and --accent-on-dark
 // (for the rail). Keep in step with --sidebar-bg in styles.css.
-export const SIDEBAR_SURFACE = '#16202E'
+// Must match --sidebar-bg in styles.css. Where the two modes differ, this
+// is deliberately the LIGHTER of the two rails (#233348, light mode): the
+// accent derived here has to stay readable on BOTH, and lightening an
+// accent until it clears the lighter rail necessarily clears the darker one
+// too. Deriving against the darker rail would pass here and fail in light
+// mode. tools/theme_contrast_test.mjs asserts this constant and the CSS
+// token have not drifted apart.
+export const SIDEBAR_SURFACE = '#233348'
 
 export function hexToRgb(hex) {
   const h = String(hex || '').trim().replace(/^#/, '')

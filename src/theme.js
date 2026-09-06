@@ -25,6 +25,36 @@ export const colors = {
   // lodge colour can never be mistaken for a status or for the brand.
 
 
+  // Categorical chart colours. Series tokens rather than the accent, so a
+
+
+
+  // lodge colour can never be mistaken for a status or for the brand.
+
+
+
+  // Categorical chart colours. Series tokens rather than the accent, so a
+
+
+
+
+  // lodge colour can never be mistaken for a status or for the brand.
+
+
+
+
+  // Categorical chart colours. Series tokens rather than the accent, so a
+
+
+
+
+
+  // lodge colour can never be mistaken for a status or for the brand.
+
+
+
+
+
   loc: { ZC: 'var(--series-1)', EC: 'var(--series-2)', SC: 'var(--series-3)' },
 }
 
@@ -51,99 +81,6 @@ export const css = `
    styles.css. Change it THERE and re-run; editing here means the seven apps
    drift apart one value at a time, invisibly. */
 :root,
-:root[data-theme='dark'] {
-  color-scheme: dark;
-
-  /* 1 — neutral base */
-  --surface-sunken: #0f1216;
-  --surface: #12161b;
-  --surface-raised: #1a1f26;
-  --surface-overlay: #222831;
-  --line: #333c48;
-  --text: #eef1f5;
-  --text-muted: #9aa5b1;
-
-  /* 2 — semantic, fixed */
-  --success: #3dbe7a;
-  --warning: #e8a33d;
-  --critical: #f0736a;
-  --informative: #63a8f0;
-
-  /* 3 — accent. Overwritten at runtime by applyTheme(); this is only the
-     fallback for a company with no accent set, and for the login screen
-     which renders before any company is known. */
-  --accent: #7c8cf8;
-  --accent-hover: #93a0fa;
-  --accent-active: #6675f0;
-  --accent-contrast: #12161b;
-  --accent-wash: rgba(124, 140, 248, 0.12);
-  --accent-on-dark: #7c8cf8;
-  --accent-on-dark-wash: rgba(124, 140, 248, 0.16);
-
-  /* Elevation and shape. Previously both were hardcoded — one shadow value
-     and 28 separate border-radius declarations — which meant "make the
-     cards pop" was a find-and-replace rather than a setting. On a dark page
-     lift comes from a darker shadow; on a light page it comes from a soft,
-     slightly blue-tinted one. A neutral grey shadow on light looks dirty. */
-  --radius-sm: 8px;
-  --radius-md: 12px;
-  --radius-lg: 16px;
-  --shadow-sm: 0 1px 3px rgba(0, 0, 0, 0.35);
-  --shadow-md: 0 4px 16px rgba(0, 0, 0, 0.4);
-  --shadow-lg: 0 12px 32px rgba(0, 0, 0, 0.45);
-
-  /* The sidebar rail is dark in BOTH modes — see SIDEBAR_SURFACE in
-     theme.js. In dark mode it sits below the page; in light mode it becomes
-     the navy chrome that makes the white cards read as floating. */
-  /* Cards keep a hairline on dark (a shadow alone barely reads there) and
-     drop it on light, where the shadow does the work and a border would
-     make the card look pasted on. It's a token rather than a CSS override
-     because four of the seven apps style their cards with INLINE style
-     objects, which can't express "only in light mode". */
-  --card-border: var(--line);
-
-  --sidebar-bg: #0f1216;
-  --sidebar-text: #e8edf4;
-  --sidebar-muted: #8b97a6;
-  --sidebar-line: rgba(255, 255, 255, 0.07);
-
-  /* Categorical series for charts — distinguishable in order, and not
-     reusing the semantic hues, so a chart series can never be mistaken for
-     a status. */
-  --series-1: #7c8cf8;
-  --series-2: #4fc4cf;
-  --series-3: #e8a33d;
-  --series-4: #b98ee6;
-  --series-5: #6ba5e7;
-  --series-6: #d98a76;
-
-  /* --- aliases: old names, new values -------------------------------- */
-  --bg: var(--surface);
-  --panel: var(--surface-raised);
-  --panel-alt: var(--surface-overlay);
-  --border: var(--line);
-  --cream: var(--text);
-  --muted: var(--text-muted);
-  --navy: var(--surface-overlay);
-  --navy-lt: var(--line);
-  --gold: var(--accent);
-  --gold-lt: var(--accent-hover);
-  --ok: var(--success);
-  --danger: var(--critical);
-  --fuel-d: var(--informative);
-  --fuel-p: var(--critical);
-  --loc-zc: var(--series-1);
-  --loc-ec: var(--series-2);
-  --loc-sc: var(--series-3);
-
-  --font-body: 'Inter', system-ui, -apple-system, sans-serif;
-  --font-heading: 'Cormorant Garamond', Georgia, serif;
-  --font-mono: 'Space Mono', ui-monospace, monospace;
-}
-
-/* Light is the shipped default for new companies: staff read this on phones
-   outdoors, where a dark UI loses badly to direct sun, and the Reports pages
-   print far better from light. Dark stays a per-user toggle. */
 :root[data-theme='light'] {
   color-scheme: light;
 
@@ -183,7 +120,10 @@ export const css = `
   --shadow-lg: 0 8px 28px rgba(22, 32, 46, 0.13);
 
   --card-border: transparent;
-  --sidebar-bg: #16202e;
+  /* Lightened from #16202e (2026-09-06, Thijs). Every text token on the
+     rail was re-measured against it rather than assumed — --sidebar-muted
+     had to lift with it, see below. */
+  --sidebar-bg: #233348;
 
   --series-1: #4338ca;
   --series-2: #0e7490;
@@ -191,6 +131,176 @@ export const css = `
   --series-4: #7e22ce;
   --series-5: #1d4ed8;
   --series-6: #b04a2f;
+
+  /* Mode-independent: shape, type, and the legacy aliases that 194
+     existing var() usages still read. These belong to the BASE block —
+     left in the dark override they would simply not exist in light
+     mode, and every aliased colour would fall back to nothing. */
+  --radius-sm: 8px;
+  --radius-md: 12px;
+  --radius-lg: 16px;
+  --sidebar-text: #e8edf4;
+  /* Lifted with the rail. At #8b97a6 this fell to 4.32:1 on the new
+     #233348 — under AA, and it is the colour the sidebar section labels
+     and the footer use. */
+  --sidebar-muted: #98a4b3;
+  --sidebar-line: rgba(255, 255, 255, 0.1);
+  /* ONE TYPEFACE. Three families was one and a half too many.
+     Space Mono on money was the worse of the two: "R 348 997,39" set with
+     wide letter-spacing and slab serifs reads as code, not currency. The
+     only real argument for mono on numbers is column alignment, and Inter
+     does that with font-variant-numeric: tabular-nums in a face that
+     matches everything around it.
+     Cormorant Garamond was a brand choice, not a product one. At 15–17px
+     its thin strokes and small counters made headings read SOFTER than the
+     body text beneath them — the opposite of a heading's job — and being
+     the most identity-carrying thing on the page makes it exactly wrong for
+     a white-label product, where the client's brand should arrive through
+     the accent and the logo. It survives as --font-brand, used only where a
+     human actually reads brand: the login screen and printed report heads. */
+  --font-body: 'Inter', system-ui, -apple-system, sans-serif;
+  --font-heading: 'Inter', system-ui, -apple-system, sans-serif;
+  --font-numeric: 'Inter', system-ui, -apple-system, sans-serif;
+  --font-brand: 'Cormorant Garamond', Georgia, serif;
+  /* Kept so the existing var(--font-mono) call sites keep resolving. It is
+     deliberately NOT monospace any more — the name is legacy, like --gold
+     and --navy below. New code should say --font-numeric. */
+  --font-mono: var(--font-numeric);
+  --bg: var(--surface);
+  --panel: var(--surface-raised);
+  --panel-alt: var(--surface-overlay);
+  --border: var(--line);
+  --cream: var(--text);
+  --muted: var(--text-muted);
+  --navy: var(--surface-overlay);
+  --navy-lt: var(--line);
+  --gold: var(--accent);
+  --gold-lt: var(--accent-hover);
+  --ok: var(--success);
+  --danger: var(--critical);
+  --fuel-d: var(--informative);
+  --fuel-p: var(--critical);
+  --loc-zc: var(--series-1);
+  --loc-ec: var(--series-2);
+  --loc-sc: var(--series-3);
+}
+
+/* DARK IS THE OVERRIDE, LIGHT IS THE DEFAULT — deliberately.
+   These blocks used to be the other way round, which meant the shipped
+   default appearance depended on JavaScript running applyTheme() to set
+   data-theme. When the branding wiring was reverted from an app, that
+   attribute stopped being set and the app silently fell back to dark. A
+   product's default look must not depend on a script succeeding. */
+:root[data-theme='dark'] {
+  color-scheme: dark;
+
+  /* 1 — neutral base */
+  --surface-sunken: #0f1216;
+  --surface: #12161b;
+  --surface-raised: #1a1f26;
+  --surface-overlay: #222831;
+  --line: #333c48;
+  --text: #eef1f5;
+  --text-muted: #9aa5b1;
+
+  /* 2 — semantic, fixed */
+  --success: #3dbe7a;
+  --warning: #e8a33d;
+  --critical: #f0736a;
+  --informative: #63a8f0;
+
+  /* 3 — accent. Overwritten at runtime by applyTheme(); this is only the
+     fallback for a company with no accent set, and for the login screen
+     which renders before any company is known. */
+  --accent: #7c8cf8;
+  --accent-hover: #93a0fa;
+  --accent-active: #6675f0;
+  --accent-contrast: #12161b;
+  --accent-wash: rgba(124, 140, 248, 0.12);
+  --accent-on-dark: #7c8cf8;
+  --accent-on-dark-wash: rgba(124, 140, 248, 0.16);
+
+  /* Elevation and shape. Previously both were hardcoded — one shadow value
+     and 28 separate border-radius declarations — which meant "make the
+     cards pop" was a find-and-replace rather than a setting. On a dark page
+     lift comes from a darker shadow; on a light page it comes from a soft,
+     slightly blue-tinted one. A neutral grey shadow on light looks dirty. */
+  --shadow-sm: 0 1px 3px rgba(0, 0, 0, 0.35);
+  --shadow-md: 0 4px 16px rgba(0, 0, 0, 0.4);
+  --shadow-lg: 0 12px 32px rgba(0, 0, 0, 0.45);
+
+  /* The sidebar rail is dark in BOTH modes — see SIDEBAR_SURFACE in
+     theme.js. In dark mode it sits below the page; in light mode it becomes
+     the navy chrome that makes the white cards read as floating. */
+  /* Cards keep a hairline on dark (a shadow alone barely reads there) and
+     drop it on light, where the shadow does the work and a border would
+     make the card look pasted on. It's a token rather than a CSS override
+     because four of the seven apps style their cards with INLINE style
+     objects, which can't express "only in light mode". */
+  --card-border: var(--line);
+
+  /* Dark mode keeps its own, darker rail: the page here is #12161b, so a
+     rail LIGHTER than the page would invert the intended depth — the rail
+     recedes behind the content rather than floating above it. That caps how
+     far this one can be lifted; #161d28 (the first attempt) overshot the
+     page and the contrast test caught it. #101420 is the lightest value
+     still below the page, and gains most of its change from being bluer
+     (blue channel 0x16 → 0x20) rather than lighter, which is the part of
+     "lighter blue" that dark mode can actually deliver. */
+  --sidebar-bg: #101420;
+
+  /* Categorical series for charts — distinguishable in order, and not
+     reusing the semantic hues, so a chart series can never be mistaken for
+     a status. */
+  --series-1: #7c8cf8;
+  --series-2: #4fc4cf;
+  --series-3: #e8a33d;
+  --series-4: #b98ee6;
+  --series-5: #6ba5e7;
+  --series-6: #d98a76;
+
+  /* --- aliases: old names, new values -------------------------------- */
+
+}
+
+/* Light is the shipped default for new companies: staff read this on phones
+   outdoors, where a dark UI loses badly to direct sun, and the Reports pages
+   print far better from light. Dark stays a per-user toggle. */
+
+/* ── Stat tiles ───────────────────────────────────────────────────────────
+   A row of headline numbers reads as one undifferentiated block when the
+   values just sit side by side — the eye has to work out where one metric
+   ends and the next begins. Giving each its own inset tile does that work
+   instead.
+
+   Note `.kpi-row > div`: the children are styled by POSITION rather than by
+   class. That means converting a stat row is a one-line change to the
+   wrapper, instead of adding a className to every number in seven apps —
+   far fewer edits, and none of them can be half-done. Ops and Maintenance
+   already use .kpi/.kpi-row markup, so they pick this up unchanged. */
+.kpi-row {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 10px;
+  align-items: stretch;
+}
+
+.kpi-row > div,
+.kpi {
+  flex: 1 1 auto;
+  min-width: 140px;
+  background: var(--surface-overlay);
+  border: 1px solid var(--card-border);
+  border-radius: var(--radius-sm);
+  padding: 12px 14px;
+}
+
+/* The tile sits on --surface-overlay, which on light is barely off-white and
+   would leave the tile invisible against a white card. A hairline restores
+   the edge without darkening the fill. */
+:root[data-theme='light'] .kpi-row > div,
+:root[data-theme='light'] .kpi {
+  border-color: var(--line);
 }
 /* THEME-TOKENS-END */
 
