@@ -6,6 +6,8 @@ import { supabase } from './supabaseClient.js'
 import Login from './Login.jsx'
 import SetPassword from './SetPassword.jsx'
 import { CompanyProvider, useCompany } from './CompanyContext.jsx'
+import { SUPABASE_URL } from './supabaseClient'
+import { resolveCompanyLogo, logoStyle } from './companyLogo.js'
 import { uploadPurchaseSlip, getSlipUrl } from './slipUpload.js'
 import { syncYocoSales, learnYocoItemMatch } from './curioSalesEngine.js'
 import { transferEffect, incomingTransfers, outstandingSent, daysInTransit } from './transferEngine.js'
@@ -734,7 +736,19 @@ function AuthenticatedApp() {
     companyName,
     role,
     switchCompany,
-  } = useCompany()
+    company,
+} = useCompany()
+
+  // The client's logo if they have one, ours if they don't (2026-09-22).
+  // This is the read the logo feature shipped without: the settings page wrote
+  // logo_path and nothing anywhere consumed it, so a client could upload their
+  // logo and still see Crossing Lodges on every screen.
+  const brand = resolveCompanyLogo({
+    company,
+    supabaseUrl: SUPABASE_URL,
+    fallback: '/logo.png',
+    fallbackAlt: 'Crossing Lodges',
+  });
   async function logout() {
     await supabase.auth.signOut()
   }
@@ -1004,7 +1018,12 @@ function AuthenticatedApp() {
           the topbar + mobile-loc-bar + bottom-nav sheet below cover mobile. */}
       <div className="sidebar">
         <div className="sidebar-logo">
-          <img src="/logo.png" alt="" onError={(e) => (e.target.style.display = 'none')} />
+          <img
+            src={brand.src}
+            alt={brand.alt}
+            style={{ width: '100%', ...logoStyle(brand.isClientLogo) }}
+            onError={(e) => { if (e.target.src !== '/logo.png') e.target.src = '/logo.png'; }}
+          />
           <div className="sidebar-sub">Curio Stock</div>
           <div className="sidebar-company">{companyName}</div>
         </div>

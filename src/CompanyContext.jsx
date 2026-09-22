@@ -80,9 +80,9 @@ export function CompanyProvider({ children }) {
       // default is the same thing "no accent configured" already means.
       let themeByCompany = {}
       try {
-        const { data: themeRows } = await supabase.from('companies').select('id, theme_accent, theme_mode')
+        const { data: themeRows } = await supabase.from('companies').select('id, theme_accent, theme_mode, logo_path, trading_name')
         for (const t of themeRows || []) {
-          themeByCompany[t.id] = { accent: t.theme_accent || null, mode: t.theme_mode || 'light' }
+          themeByCompany[t.id] = { accent: t.theme_accent || null, mode: t.theme_mode || 'light' , logoPath: t.logo_path || null, tradingName: t.trading_name || null }
         }
       } catch {
         themeByCompany = {}
@@ -97,6 +97,8 @@ export function CompanyProvider({ children }) {
           // White-label branding: one accent, one default mode. Null accent
           // means "use the product default".
           themeAccent: themeByCompany[c.id]?.accent ?? null,
+            logoPath: themeByCompany[c.id]?.logoPath ?? null,
+            tradingName: themeByCompany[c.id]?.tradingName ?? null,
           themeMode: themeByCompany[c.id]?.mode ?? 'light',
           memberBillingEnabled: !!c.member_billing_enabled,
           role: roleByCompany[c.id] || (isPlatformAdmin ? 'admin' : null),
@@ -178,7 +180,15 @@ export function CompanyProvider({ children }) {
     applyTheme({ accent: current.themeAccent, companyDefaultMode: current.themeMode })
   }, [current?.themeAccent, current?.themeMode])
 
+  // Shaped as a row so resolveCompanyLogo() takes it directly (2026-09-22).
+  // The logo feature shipped with storage and a settings page and NO reader;
+  // this is the reader.
+  const companyRow = current
+    ? { logo_path: current.logoPath, name: current.name, trading_name: current.tradingName }
+    : null
+
   const value = {
+    company: companyRow,
     // Gate on lodges too — see locationsReady above.
     loading: loading || !locationsReady,
     error,
