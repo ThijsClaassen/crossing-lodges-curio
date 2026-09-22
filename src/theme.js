@@ -409,6 +409,25 @@ export const css = `
      Its text colours are fixed tokens, never --cream/--muted, because those
      flip with the mode and would turn near-black on navy in light mode. */
   .sidebar{background:var(--sidebar-bg);color:var(--sidebar-text);border-right:1px solid var(--sidebar-line)}
+  /* RAIL-SAFE SIDEBAR TEXT (2026-09-22).
+     These selectors were styled before the sidebar became a dark navy rail in
+     both light and dark mode, so they still used PAGE tokens — --text-muted is
+     tuned for a white panel and lands at 2.16:1 on #233348, under half the 4.5:1
+     minimum, and .nav-section then multiplied it down again with opacity:.7.
+     Thijs, Demo environment: "can barely read anything in the menu beam."
+     The rail has its own tuned palette; these use it. */
+  .nav-section{color:var(--sidebar-muted);opacity:1}
+  .loc-label{color:var(--sidebar-muted)}
+  .loc-btn{color:var(--sidebar-muted)}
+  .loc-btn:hover{color:var(--sidebar-text);background:rgba(255,255,255,.06)}
+  /* Attribute selector, not a list of lodge codes: the lodge list is loaded
+     from the database, so a new lodge gets active-<id> with no rule written
+     for it. Each lodge keeps its own background wash and border from the rules
+     above — that is the colour-coding — and only the LABEL is forced to a
+     colour that is readable on the rail. --accent at 1.62:1 was the worst
+     offender on the whole screen. */
+  .loc-btn[class*="active-"]{color:var(--sidebar-text)}
+  .logo-sub{color:var(--accent-on-dark)}
   .sidebar-logo{border-bottom-color:var(--sidebar-line)}
   .sidebar-sub{color:var(--accent-on-dark)}
   .sidebar-company{color:var(--sidebar-muted)}
