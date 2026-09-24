@@ -47,6 +47,30 @@ export const LOGIN_CSS = `
   --cl-login-critical: var(--critical, #b42318);
 }
 
+/* EVERY INHERITABLE PROPERTY IS SET EXPLICITLY BELOW (2026-09-24).
+
+   This screen sits inside seven different apps, and some of them import a
+   global stylesheet of their own. Food Stock does: its styles.css sets a page
+   line-height, which this file did not override, so its card came out 306px
+   against 294px everywhere else and its title 30px against 24px. Same colours,
+   same fonts, different rhythm — the exact "not quite the same" that is hard
+   to name from a screenshot and obvious in a measurement.
+
+   So nothing here inherits. line-height in particular is declared on every
+   element that renders text, because an unset line-height is the property
+   most likely to differ between host apps and the least likely to be
+   noticed. */
+.cl-login,
+.cl-login *,
+.cl-login *::before,
+.cl-login *::after {
+  box-sizing: border-box;
+  line-height: 1.2;
+  letter-spacing: normal;
+  text-transform: none;
+  font-style: normal;
+}
+
 .cl-login {
   min-height: 100vh;
   display: flex;
