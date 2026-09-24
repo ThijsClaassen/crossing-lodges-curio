@@ -1,21 +1,31 @@
 import { useState } from 'react'
 import { supabase } from './supabaseClient.js'
-import { colors, fonts, css } from './theme.js'
+import { APP_NAME } from './appName.js'
+import { LOGIN_CSS, BRAND_NAME, BRAND_LOGO } from './loginTheme.js'
 
-// Real Supabase Auth login — same pattern as every other Crossing Lodges
-// app. No onLogin callback needed: a successful sign-in fires Supabase's
-// own onAuthStateChange event, which App.jsx already listens for. Which
-// company/companies the signed-in user can access is resolved separately,
-// after login, by CompanyContext.jsx.
+// The sign-in screen. SHARED FILE (2026-09-24).
 //
-// Also accepts a username instead of an email, for staff an Admin has set
-// up without a real email address (see the Finance Dashboard's Users tab /
-// add_username_login_and_app_access.sql). If the identifier doesn't look
-// like an email, it's resolved to the account's real (possibly synthetic)
-// email via the resolve_username_email() RPC before signing in — Supabase
-// Auth itself still only ever sees an email.
+// IDENTICAL IN EVERY APP, byte for byte. The only thing that differs between
+// the seven copies is appName.js, a single exported string. Edit this file in
+// crossing-lodges-budget, run tools/sync_login.mjs, and the copies follow;
+// tools/login_screen_test.mjs fails the build if any of them drift.
+//
+// WHY THAT MATTERS. Before this, six apps had four different login designs —
+// different fonts, card widths, label casing, and two different words for the
+// same button. Nobody decided that; the screens were written at different
+// times and never reconciled. A shared file is the only thing that keeps a
+// seventh variation from appearing the next time someone adds an app.
+//
+// Branding is read at build time from the deployment's env (see loginTheme.js)
+// so a client's Vercel project shows their name without touching code.
+//
+// AUTH. Real Supabase Auth. Accepts a username instead of an email for staff
+// set up without one: anything with no "@" is resolved to the account's real
+// (possibly synthetic) address via the resolve_username_email RPC first, so
+// Supabase itself only ever sees an email. No onLogin callback — a successful
+// sign-in fires onAuthStateChange, which App.jsx already listens for.
 export default function Login() {
-  const [email, setEmail] = useState('')
+  const [identifier, setIdentifier] = useState('')
   const [password, setPassword] = useState('')
   const [error, setError] = useState('')
   const [loading, setLoading] = useState(false)
@@ -25,144 +35,82 @@ export default function Login() {
     setError('')
     setLoading(true)
 
-    const identifier = email.trim()
-    let loginEmail = identifier
+    const entered = identifier.trim()
+    let loginEmail = entered
 
-    if (identifier && !identifier.includes('@')) {
-      const { data: resolvedEmail, error: resolveError } = await supabase.rpc('resolve_username_email', {
-        p_username: identifier,
+    if (entered && !entered.includes('@')) {
+      const { data: resolved, error: resolveError } = await supabase.rpc('resolve_username_email', {
+        p_username: entered,
       })
-      if (resolveError || !resolvedEmail) {
+      if (resolveError || !resolved) {
+        // Deliberately the SAME message as a wrong password. Saying "no such
+        // username" would confirm which accounts exist to anyone who asks.
         setError('Incorrect email/username or password.')
         setLoading(false)
         return
       }
-      loginEmail = resolvedEmail
+      loginEmail = resolved
     }
 
-    const { error: authError } = await supabase.auth.signInWithPassword({ email: loginEmail, password })
+    const { error: authError } = await supabase.auth.signInWithPassword({
+      email: loginEmail,
+      password,
+    })
 
     setLoading(false)
 
     if (authError) {
       setError(
-        authError.message === 'Invalid login credentials' ? 'Incorrect email/username or password.' : authError.message
+        authError.message === 'Invalid login credentials'
+          ? 'Incorrect email/username or password.'
+          : authError.message,
       )
     }
   }
 
-  // THE THEME HAS TO COME WITH THIS SCREEN (2026-09-24).
-  //
-  // Every colour below is a var(--token): colors.bg is "var(--surface)", and so
-  // on. Those tokens are defined in theme.js's `css`, which App.jsx injects —
-  // but App.jsx only renders that <style> once you are SIGNED IN. So on the
-  // login screen not one variable existed, every inline style resolved to
-  // nothing, and the page rendered as unstyled black text on white with no card
-  // and no input borders.
-  //
-  // It looked like a broken stylesheet. It was a stylesheet that had not loaded
-  // yet. Ops and Maintenance already injected it here for exactly this reason;
-  // this brings the rest into line.
   return (
     <>
-      <style>{css}</style>
-      <div
-        style={{
-          fontFamily: fonts.body,
-          background: colors.bg,
-          minHeight: '100vh',
-          color: colors.cream,
-          display: 'flex',
-          flexDirection: 'column',
-          alignItems: 'center',
-          justifyContent: 'center',
-          padding: 24,
-        }}
-      >
-        <img
-          src="/logo.png"
-          alt=""
-          style={{ height: 56, width: 'auto', display: 'block', marginBottom: 12 }}
-          onError={(e) => (e.target.style.display = 'none')}
-        />
-        <div style={{ fontFamily: fonts.heading, fontSize: 22, fontWeight: 600, marginBottom: 4 }}>
-          Crossing Lodges
-        </div>
-        <div style={{ fontSize: 11, letterSpacing: '.1em', textTransform: 'uppercase', color: colors.gold, marginBottom: 24 }}>
-          Curio Stock
+      <style>{LOGIN_CSS}</style>
+      <div className="cl-login">
+        <div className={BRAND_LOGO ? 'cl-login-mark has-logo' : 'cl-login-mark'}>
+          {BRAND_LOGO && <img src={BRAND_LOGO} alt={BRAND_NAME} />}
+          <div className="cl-login-brand">{BRAND_NAME}</div>
+          <div className="cl-login-app">{APP_NAME}</div>
         </div>
 
-        <form
-          onSubmit={handleSubmit}
-          style={{
-            width: '100%',
-            maxWidth: 320,
-            background: colors.panel,
-            border: `1px solid ${colors.border}`,
-            borderRadius: 12,
-            padding: 20,
-            boxSizing: 'border-box',
-          }}
-        >
-          <label style={{ fontSize: 11, color: colors.muted, marginBottom: 3, display: 'block' }}>Email or username</label>
-          <input
-            type="text"
-            autoFocus
-            autoComplete="username"
-            value={email}
-            onChange={(e) => setEmail(e.target.value)}
-            style={{
-              width: '100%',
-              padding: '9px 10px',
-              borderRadius: 8,
-              border: `1px solid ${colors.border}`,
-              background: colors.bg,
-              color: colors.cream,
-              fontSize: 15,
-              boxSizing: 'border-box',
-              marginBottom: 12,
-            }}
-          />
+        <form className="cl-login-card" onSubmit={handleSubmit}>
+          <h1 className="cl-login-title">Sign in</h1>
 
-          <label style={{ fontSize: 11, color: colors.muted, marginBottom: 3, display: 'block' }}>Password</label>
-          <input
-            type="password"
-            autoComplete="current-password"
-            value={password}
-            onChange={(e) => setPassword(e.target.value)}
-            style={{
-              width: '100%',
-              padding: '9px 10px',
-              borderRadius: 8,
-              border: `1px solid ${colors.border}`,
-              background: colors.bg,
-              color: colors.cream,
-              fontSize: 15,
-              boxSizing: 'border-box',
-            }}
-          />
+          <div className="cl-login-field">
+            <label htmlFor="cl-login-id">Email or username</label>
+            <input
+              id="cl-login-id"
+              type="text"
+              autoFocus
+              autoComplete="username"
+              value={identifier}
+              onChange={(e) => setIdentifier(e.target.value)}
+              placeholder="Enter email or username"
+            />
+          </div>
 
-          {error && <div style={{ color: colors.danger, fontSize: 12, marginTop: 10 }}>{error}</div>}
+          <div className="cl-login-field">
+            <label htmlFor="cl-login-pw">Password</label>
+            <input
+              id="cl-login-pw"
+              type="password"
+              autoComplete="current-password"
+              value={password}
+              onChange={(e) => setPassword(e.target.value)}
+              placeholder="Enter password"
+            />
+          </div>
 
-          <button
-            type="submit"
-            disabled={loading}
-            style={{
-              width: '100%',
-              marginTop: 16,
-              padding: '10px 14px',
-              borderRadius: 8,
-              border: 'none',
-              background: colors.navy,
-              color: colors.cream,
-              fontWeight: 600,
-              fontSize: 14,
-              cursor: 'pointer',
-              opacity: loading ? 0.6 : 1,
-            }}
-          >
-            {loading ? 'Checking…' : 'Sign In'}
+          <button className="cl-login-button" type="submit" disabled={loading}>
+            {loading ? 'Signing in…' : 'Sign in'}
           </button>
+
+          {error && <p className="cl-login-error">{error}</p>}
         </form>
       </div>
     </>
