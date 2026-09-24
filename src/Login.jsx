@@ -1,6 +1,6 @@
 import { useState } from 'react'
 import { supabase } from './supabaseClient.js'
-import { colors, fonts } from './theme.js'
+import { colors, fonts, css } from './theme.js'
 
 // Real Supabase Auth login — same pattern as every other Crossing Lodges
 // app. No onLogin callback needed: a successful sign-in fires Supabase's
@@ -51,105 +51,120 @@ export default function Login() {
     }
   }
 
+  // THE THEME HAS TO COME WITH THIS SCREEN (2026-09-24).
+  //
+  // Every colour below is a var(--token): colors.bg is "var(--surface)", and so
+  // on. Those tokens are defined in theme.js's `css`, which App.jsx injects —
+  // but App.jsx only renders that <style> once you are SIGNED IN. So on the
+  // login screen not one variable existed, every inline style resolved to
+  // nothing, and the page rendered as unstyled black text on white with no card
+  // and no input borders.
+  //
+  // It looked like a broken stylesheet. It was a stylesheet that had not loaded
+  // yet. Ops and Maintenance already injected it here for exactly this reason;
+  // this brings the rest into line.
   return (
-    <div
-      style={{
-        fontFamily: fonts.body,
-        background: colors.bg,
-        minHeight: '100vh',
-        color: colors.cream,
-        display: 'flex',
-        flexDirection: 'column',
-        alignItems: 'center',
-        justifyContent: 'center',
-        padding: 24,
-      }}
-    >
-      <img
-        src="/logo.png"
-        alt=""
-        style={{ height: 56, width: 'auto', display: 'block', marginBottom: 12 }}
-        onError={(e) => (e.target.style.display = 'none')}
-      />
-      <div style={{ fontFamily: fonts.heading, fontSize: 22, fontWeight: 600, marginBottom: 4 }}>
-        Crossing Lodges
-      </div>
-      <div style={{ fontSize: 11, letterSpacing: '.1em', textTransform: 'uppercase', color: colors.gold, marginBottom: 24 }}>
-        Curio Stock
-      </div>
-
-      <form
-        onSubmit={handleSubmit}
+    <>
+      <style>{css}</style>
+      <div
         style={{
-          width: '100%',
-          maxWidth: 320,
-          background: colors.panel,
-          border: `1px solid ${colors.border}`,
-          borderRadius: 12,
-          padding: 20,
-          boxSizing: 'border-box',
+          fontFamily: fonts.body,
+          background: colors.bg,
+          minHeight: '100vh',
+          color: colors.cream,
+          display: 'flex',
+          flexDirection: 'column',
+          alignItems: 'center',
+          justifyContent: 'center',
+          padding: 24,
         }}
       >
-        <label style={{ fontSize: 11, color: colors.muted, marginBottom: 3, display: 'block' }}>Email or username</label>
-        <input
-          type="text"
-          autoFocus
-          autoComplete="username"
-          value={email}
-          onChange={(e) => setEmail(e.target.value)}
-          style={{
-            width: '100%',
-            padding: '9px 10px',
-            borderRadius: 8,
-            border: `1px solid ${colors.border}`,
-            background: colors.bg,
-            color: colors.cream,
-            fontSize: 15,
-            boxSizing: 'border-box',
-            marginBottom: 12,
-          }}
+        <img
+          src="/logo.png"
+          alt=""
+          style={{ height: 56, width: 'auto', display: 'block', marginBottom: 12 }}
+          onError={(e) => (e.target.style.display = 'none')}
         />
+        <div style={{ fontFamily: fonts.heading, fontSize: 22, fontWeight: 600, marginBottom: 4 }}>
+          Crossing Lodges
+        </div>
+        <div style={{ fontSize: 11, letterSpacing: '.1em', textTransform: 'uppercase', color: colors.gold, marginBottom: 24 }}>
+          Curio Stock
+        </div>
 
-        <label style={{ fontSize: 11, color: colors.muted, marginBottom: 3, display: 'block' }}>Password</label>
-        <input
-          type="password"
-          autoComplete="current-password"
-          value={password}
-          onChange={(e) => setPassword(e.target.value)}
+        <form
+          onSubmit={handleSubmit}
           style={{
             width: '100%',
-            padding: '9px 10px',
-            borderRadius: 8,
+            maxWidth: 320,
+            background: colors.panel,
             border: `1px solid ${colors.border}`,
-            background: colors.bg,
-            color: colors.cream,
-            fontSize: 15,
+            borderRadius: 12,
+            padding: 20,
             boxSizing: 'border-box',
-          }}
-        />
-
-        {error && <div style={{ color: colors.danger, fontSize: 12, marginTop: 10 }}>{error}</div>}
-
-        <button
-          type="submit"
-          disabled={loading}
-          style={{
-            width: '100%',
-            marginTop: 16,
-            padding: '10px 14px',
-            borderRadius: 8,
-            border: 'none',
-            background: colors.navy,
-            color: colors.cream,
-            fontWeight: 600,
-            fontSize: 14,
-            cursor: 'pointer',
-            opacity: loading ? 0.6 : 1,
           }}
         >
-          {loading ? 'Checking…' : 'Sign In'}
-        </button>
-      </form>
-    </div>
+          <label style={{ fontSize: 11, color: colors.muted, marginBottom: 3, display: 'block' }}>Email or username</label>
+          <input
+            type="text"
+            autoFocus
+            autoComplete="username"
+            value={email}
+            onChange={(e) => setEmail(e.target.value)}
+            style={{
+              width: '100%',
+              padding: '9px 10px',
+              borderRadius: 8,
+              border: `1px solid ${colors.border}`,
+              background: colors.bg,
+              color: colors.cream,
+              fontSize: 15,
+              boxSizing: 'border-box',
+              marginBottom: 12,
+            }}
+          />
+
+          <label style={{ fontSize: 11, color: colors.muted, marginBottom: 3, display: 'block' }}>Password</label>
+          <input
+            type="password"
+            autoComplete="current-password"
+            value={password}
+            onChange={(e) => setPassword(e.target.value)}
+            style={{
+              width: '100%',
+              padding: '9px 10px',
+              borderRadius: 8,
+              border: `1px solid ${colors.border}`,
+              background: colors.bg,
+              color: colors.cream,
+              fontSize: 15,
+              boxSizing: 'border-box',
+            }}
+          />
+
+          {error && <div style={{ color: colors.danger, fontSize: 12, marginTop: 10 }}>{error}</div>}
+
+          <button
+            type="submit"
+            disabled={loading}
+            style={{
+              width: '100%',
+              marginTop: 16,
+              padding: '10px 14px',
+              borderRadius: 8,
+              border: 'none',
+              background: colors.navy,
+              color: colors.cream,
+              fontWeight: 600,
+              fontSize: 14,
+              cursor: 'pointer',
+              opacity: loading ? 0.6 : 1,
+            }}
+          >
+            {loading ? 'Checking…' : 'Sign In'}
+          </button>
+        </form>
+      </div>
+    </>
   )
 }
