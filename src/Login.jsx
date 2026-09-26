@@ -1,7 +1,7 @@
 import { useState } from 'react'
 import { supabase } from './supabaseClient.js'
 import { APP_NAME } from './appName.js'
-import { LOGIN_CSS, BRAND_NAME, BRAND_LOGO } from './loginTheme.js'
+import { LOGIN_CSS, useLoginBrand } from './loginTheme.js'
 
 // The sign-in screen. SHARED FILE (2026-09-24).
 //
@@ -16,8 +16,9 @@ import { LOGIN_CSS, BRAND_NAME, BRAND_LOGO } from './loginTheme.js'
 // times and never reconciled. A shared file is the only thing that keeps a
 // seventh variation from appearing the next time someone adds an app.
 //
-// Branding is read at build time from the deployment's env (see loginTheme.js)
-// so a client's Vercel project shows their name without touching code.
+// Branding is resolved from the HOSTNAME via login_brand() (see loginTheme.js
+// and add_company_domains.sql): every tenant shares these deployments, so the
+// name on this screen has to come from which domain the browser is on.
 //
 // AUTH. Real Supabase Auth. Accepts a username instead of an email for staff
 // set up without one: anything with no "@" is resolved to the account's real
@@ -29,6 +30,7 @@ export default function Login() {
   const [password, setPassword] = useState('')
   const [error, setError] = useState('')
   const [loading, setLoading] = useState(false)
+  const brand = useLoginBrand()
 
   async function handleSubmit(e) {
     e.preventDefault()
@@ -72,9 +74,9 @@ export default function Login() {
     <>
       <style>{LOGIN_CSS}</style>
       <div className="cl-login">
-        <div className={BRAND_LOGO ? 'cl-login-mark has-logo' : 'cl-login-mark'}>
-          {BRAND_LOGO && <img src={BRAND_LOGO} alt={BRAND_NAME} />}
-          <div className="cl-login-brand">{BRAND_NAME}</div>
+        <div className={brand.logo ? 'cl-login-mark has-logo' : 'cl-login-mark'}>
+          {brand.logo && <img src={brand.logo} alt={brand.name} />}
+          <div className="cl-login-brand">{brand.name}</div>
           <div className="cl-login-app">{APP_NAME}</div>
         </div>
 

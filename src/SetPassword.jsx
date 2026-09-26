@@ -1,7 +1,7 @@
 import { useState } from 'react'
 import { supabase } from './supabaseClient.js'
 import { APP_NAME } from './appName.js'
-import { LOGIN_CSS, BRAND_NAME, BRAND_LOGO } from './loginTheme.js'
+import { LOGIN_CSS, useLoginBrand } from './loginTheme.js'
 
 // Choose a password. SHARED FILE (2026-09-24).
 //
@@ -17,6 +17,7 @@ import { LOGIN_CSS, BRAND_NAME, BRAND_LOGO } from './loginTheme.js'
 // staff ever sees, and the first impression of the product should not change
 // between two consecutive screens.
 export default function SetPassword({ onDone }) {
+  const brand = useLoginBrand()
   const [password, setPassword] = useState('')
   const [confirm, setConfirm] = useState('')
   const [error, setError] = useState('')
@@ -51,9 +52,9 @@ export default function SetPassword({ onDone }) {
     <>
       <style>{LOGIN_CSS}</style>
       <div className="cl-login">
-        <div className={BRAND_LOGO ? 'cl-login-mark has-logo' : 'cl-login-mark'}>
-          {BRAND_LOGO && <img src={BRAND_LOGO} alt={BRAND_NAME} />}
-          <div className="cl-login-brand">{BRAND_NAME}</div>
+        <div className={brand.logo ? 'cl-login-mark has-logo' : 'cl-login-mark'}>
+          {brand.logo && <img src={brand.logo} alt={brand.name} />}
+          <div className="cl-login-brand">{brand.name}</div>
           <div className="cl-login-app">{APP_NAME}</div>
         </div>
 

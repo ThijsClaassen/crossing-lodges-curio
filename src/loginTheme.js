@@ -16,19 +16,70 @@
 // index.html at all and were quietly falling back to a generic serif.
 
 // ---------------------------------------------------------------------------
-// WHITE LABEL. Read at BUILD time from the deployment's env, so each tenant's
-// Vercel project shows their own name without a code change:
+// WHITE LABEL (#503, 2026-09-26). The brand comes from the HOSTNAME.
 //
-//   VITE_BRAND_NAME  "Crossing Lodges"        — wordmark above the app name
-//   VITE_BRAND_LOGO  "/brand-logo.png"        — optional; a URL or data: URI
+// All tenants share one set of deployments, so a build-time variable can only
+// ever hold one tenant's name. Instead, each client's domains point at the
+// same deployments, and the sign-in screen asks login_brand(hostname) — a
+// public, anon-callable function (add_company_domains.sql) that returns only
+// a display name, a logo path and two theme values. See that file for why
+// the return shape is treated as a security boundary.
 //
-// Unset falls back to the product name, NOT to Crossing Lodges. A client's
-// deployment that forgets the variable shows something neutral rather than
-// someone else's brand — the failure mode has to be safe, because nobody
-// checks a login screen they can already get past.
+// Order of precedence on screen:
+//   1. what login_brand() returns for window.location.hostname
+//   2. VITE_BRAND_NAME / VITE_BRAND_LOGO — build-time, kept for local dev
+//   3. 'Lodge Manager' — neutral, never a tenant's name
+//
+// The lookup never blocks the form: the screen renders with (2)/(3) at once
+// and swaps to (1) when it arrives. A slow or broken lookup costs a flicker,
+// not a sign-in.
+import { useEffect, useState } from 'react'
+import { supabase } from './supabaseClient.js'
+
 const env = (typeof import.meta !== 'undefined' && import.meta.env) || {}
 export const BRAND_NAME = (env.VITE_BRAND_NAME || '').trim() || 'Lodge Manager'
 export const BRAND_LOGO = (env.VITE_BRAND_LOGO || '').trim() || ''
+
+// Logos live in the public 'company-logos' bucket (add_company_logo_bucket.sql;
+// same URL shape as companyLogo.js's publicLogoUrl, repeated here because this
+// file is byte-shared across seven apps and cannot import an app-local module).
+export function loginLogoUrl(logoPath) {
+  const base = String(env.VITE_SUPABASE_URL || '').replace(/\/+$/, '')
+  const path = String(logoPath || '').replace(/^\/+/, '')
+  if (!base || !path) return ''
+  return `${base}/storage/v1/object/public/company-logos/${path.split('/').map(encodeURIComponent).join('/')}`
+}
+
+// Pure: turns the RPC result (or nothing) into what the screen shows.
+export function resolveLoginBrand(row) {
+  const name = String(row?.brand_name || '').trim()
+  if (!name) return { name: BRAND_NAME, logo: BRAND_LOGO, fromHost: false }
+  return { name, logo: loginLogoUrl(row.logo_path) || '', fromHost: true }
+}
+
+export async function fetchLoginBrand(host) {
+  try {
+    const { data, error } = await supabase.rpc('login_brand', { p_host: host })
+    if (error) return null
+    return Array.isArray(data) ? data[0] || null : data || null
+  } catch {
+    return null
+  }
+}
+
+export function useLoginBrand() {
+  const [brand, setBrand] = useState(() => resolveLoginBrand(null))
+  useEffect(() => {
+    let cancelled = false
+    const host = typeof window !== 'undefined' ? window.location.hostname : ''
+    if (!host) return
+    fetchLoginBrand(host).then((row) => {
+      if (!cancelled && row) setBrand(resolveLoginBrand(row))
+    })
+    return () => { cancelled = true }
+  }, [])
+  return brand
+}
 
 export const LOGIN_CSS = `
 @import url('https://fonts.googleapis.com/css2?family=Cormorant+Garamond:wght@600&family=Inter:wght@300;400;500;600;700&display=swap');
