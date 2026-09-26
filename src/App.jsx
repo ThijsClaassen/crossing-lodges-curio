@@ -761,7 +761,15 @@ function AuthenticatedApp() {
   useEffect(() => {
     if (LOCATIONS.length === 0) return
     if (!LOCATIONS.some((l) => l.id === location)) setLocation(LOCATIONS[0].id)
-  }, [companyId, location])
+    // companyLoading is a dependency on purpose (2026-09-26). LOCATIONS is a
+    // mutable module array, invisible to React: this effect first runs while
+    // the lodge list is still empty (returns early), and on a company switch
+    // it runs BEFORE the new list has arrived (old list, old pick still valid,
+    // nothing to do). Neither run snaps. companyLoading flips false exactly
+    // when the list is in place, so it is the signal to re-check. Without it
+    // the Ops app crashed on the new tenant: locId stayed 'ZC', locData had
+    // no such key, and the dashboard read loc.dieselIssues off undefined.
+  }, [companyId, location, companyLoading])
   const [period, setPeriod] = useState(currentPeriod())
   const [tab, setTab] = useState('dashboard')
   const [menuOpen, setMenuOpen] = useState(false)
