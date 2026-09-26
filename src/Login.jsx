@@ -41,8 +41,14 @@ export default function Login() {
     let loginEmail = entered
 
     if (entered && !entered.includes('@')) {
+      // The hostname goes along (#504): the same first name can exist in
+      // several companies, and which one is meant is decided by which
+      // company's domain the browser is on (company_domains). A host that is
+      // not mapped still resolves any username that exists in only one
+      // company, so nothing that signs in today stops.
       const { data: resolved, error: resolveError } = await supabase.rpc('resolve_username_email', {
         p_username: entered,
+        p_host: typeof window !== 'undefined' ? window.location.hostname : null,
       })
       if (resolveError || !resolved) {
         // Deliberately the SAME message as a wrong password. Saying "no such
