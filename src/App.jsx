@@ -1199,6 +1199,12 @@ function AuthenticatedApp() {
                 onUpdate={updateLocalItem}
                 onRemove={removeLocalItem}
                 companyId={companyId}
+                variant="curio"
+                table="curio_items"
+                unitOptions={null}
+                purchases={purchases}
+                issues={issues}
+                transfers={transfers}
               />
             )}
             {activeTab === 'suppliers' && role === 'admin' && (
@@ -1678,10 +1684,6 @@ function SearchableSelect({ value, onChange, options, placeholder = 'Select…',
   )
 }
 
-// ---------------------------------------------------------------------------
-// Items tab — manage the curio shop master list for the selected lodge
-// ---------------------------------------------------------------------------
-
 // Pick an existing category, or add a new one — the same "dropdown of what's
 // already in use" pattern as Position and Department in the HR app.
 //
@@ -2056,269 +2058,443 @@ function TransfersTab({ items, metricsByItem, transfers, location, companyId, on
   )
 }
 
-function ItemsTab({ items, metricsByItem, location, suppliers, onAdd, onUpdate, onRemove, companyId }) {
-  const [form, setForm] = useState({
-    name: '',
-    category: 'Gifts',
-    count_unit: 'ea',
-    sell_price: '',
-    supplier_id: '',
-    min_units: 5,
-    max_units: 20,
-    order_pack_size: 1,
-    order_pack_label: '',
+// ---------------------------------------------------------------------------
+// Drawer — the detail pattern (readability pass, 2026-09-27). Title + meta,
+// tabs, a scrolling body and a fixed footer, sliding in from the right. Same
+// classes and behaviour as the Ops / HR / Maintenance / Finance drawers so
+// an item here feels like a vehicle or an employee there. Esc and the scrim
+// close it. Footer buttons submit the body's form through the HTML `form`
+// attribute, so the footer stays put while the body scrolls.
+// ---------------------------------------------------------------------------
+function Drawer({ title, meta, tabs, tab, onTab, onClose, footer, children }) {
+  useEffect(() => {
+    const onKey = (e) => { if (e.key === 'Escape') onClose() }
+    window.addEventListener('keydown', onKey)
+    return () => window.removeEventListener('keydown', onKey)
+  }, [onClose])
+  return (
+    <>
+      <div className="drawer-scrim" onClick={onClose} />
+      <aside className="drawer" role="dialog" aria-label={typeof title === 'string' ? title : undefined}>
+        <div className="drawer-head">
+          <div className="drawer-title">
+            <div><h2>{title}</h2>{meta && <div className="drawer-meta">{meta}</div>}</div>
+            <button type="button" className="drawer-x" onClick={onClose} title="Close (Esc)">×</button>
+          </div>
+          {tabs && (
+            <div className="drawer-tabs">
+              {tabs.map((t) => (
+                <button type="button" key={t.id} className={tab === t.id ? 'active' : ''} onClick={() => onTab(t.id)}>
+                  {t.label}{t.count != null && <span className="n">{t.count}</span>}
+                </button>
+              ))}
+            </div>
+          )}
+        </div>
+        <div className="drawer-body">{children}</div>
+        {footer && <div className="drawer-foot">{footer}</div>}
+      </aside>
+    </>
+  )
+}
+
+// ---------------------------------------------------------------------------
+// Items tab — the list is six columns (item, units, stock level, average
+// cost, stock value, open); everything else is edited in the item drawer:
+// Basics · Units & packs · Stock levels · History. Since the readability
+// pass (2026-09-27) nothing is typed straight into the table any more.
+//
+// `variant` picks the fields that differ per app: 'food' has purchase and
+// recipe units, a conversion and a VAT treatment; 'bev' a serving unit and a
+// pricing tier; 'curio' a serving unit and a sell price. Everything else
+// (category, supplier, min/max, order pack, barcode) is shared.
+// ---------------------------------------------------------------------------
+const ITEM_TABS = [
+  { id: 'basics', label: 'Basics' },
+  { id: 'units', label: 'Units & packs' },
+  { id: 'levels', label: 'Stock levels' },
+  { id: 'history', label: 'History' },
+]
+
+function blankItem(variant) {
+  const base = { name: '', category: '', supplier_id: '', min_units: 0, max_units: 0, order_pack_size: 1, order_pack_label: '', barcode: '' }
+  if (variant === 'food') return { ...base, category: 'Dry- and other stock', purchase_unit: 'kg', recipe_unit: 'kg', conversion_factor: 1, vat_treatment: '' }
+  if (variant === 'bev') return { ...base, category: 'Beer', count_unit: 'ea', pricing_tier: 'Included', min_units: 24, max_units: 72 }
+  return { ...base, category: 'Gifts', count_unit: 'ea', sell_price: '', min_units: 5, max_units: 20 }
+}
+
+function itemToForm(it, variant) {
+  const f = {}
+  for (const k of Object.keys(blankItem(variant))) f[k] = it[k] ?? ''
+  if (variant === 'food') f.conversion_factor = it.conversion_factor ?? 1
+  f.order_pack_size = it.order_pack_size ?? 1
+  return f
+}
+
+// What the row writes. '' means null for the optional columns; numbers are
+// coerced here so a blank box never reaches a numeric column as a string.
+function formToPatch(form, variant) {
+  const p = {
+    name: form.name.trim(),
+    category: form.category || null,
+    supplier_id: form.supplier_id || null,
+    min_units: Number(form.min_units) || 0,
+    max_units: Number(form.max_units) || 0,
+    order_pack_size: Number(form.order_pack_size) || 1,
+    order_pack_label: (form.order_pack_label || '').trim() || null,
+    barcode: (form.barcode || '').trim() || null,
+  }
+  if (variant === 'food') {
+    p.purchase_unit = form.purchase_unit
+    p.recipe_unit = form.recipe_unit
+    p.conversion_factor = Number(form.conversion_factor) || 1
+    // '' is the form's "not decided yet"; the column needs a real null, and
+    // its CHECK constraint would reject an empty string outright.
+    p.vat_treatment = form.vat_treatment || null
+  } else {
+    p.count_unit = (form.count_unit || '').trim() || 'ea'
+    if (variant === 'bev') p.pricing_tier = form.pricing_tier || 'Included'
+    if (variant === 'curio') p.sell_price = Number(form.sell_price) || 0
+  }
+  return p
+}
+
+function stockNow(m) {
+  if (!m) return null
+  return m.hasCount ? m.closingCount : m.theoreticalClosing
+}
+
+function ItemsTab({ items, metricsByItem, location, companyId, suppliers, onAdd, onUpdate, onRemove, variant = 'food', table = 'food_items', unitOptions = null, purchases = [], issues = [], transfers = [] }) {
+  const [search, setSearch] = useState('')
+  const [catFilter, setCatFilter] = useState('')
+  const [supFilter, setSupFilter] = useState('')
+  const [flag, setFlag] = useState('')
+  const [openId, setOpenId] = useState(null) // item id, or 'new'
+
+  const categoryOptions = useMemo(() => Array.from(new Set(items.map((it) => it.category).filter(Boolean))).sort(), [items])
+  const supplierName = (id) => suppliers.find((s) => s.id === id)?.name || null
+
+  const rowsAll = items.map((it) => {
+    const m = metricsByItem?.[it.id]
+    const units = stockNow(m)
+    const value = m && units != null ? units * m.weightedAvgCost : null
+    const min = Number(it.min_units) || 0
+    const low = min > 0 && units != null && units < min
+    const out = units != null && units <= 0 && min > 0
+    return { it, m, units, value, min, low, out }
   })
-  const [saving, setSaving] = useState(false)
+  const belowMin = rowsAll.filter((r) => r.low).length
+  const noSupplier = rowsAll.filter((r) => !r.it.supplier_id).length
+  const q = search.trim().toLowerCase()
+  const rows = rowsAll
+    .filter((r) => !q || `${r.it.name} ${r.it.barcode || ''}`.toLowerCase().includes(q))
+    .filter((r) => !catFilter || r.it.category === catFilter)
+    .filter((r) => !supFilter || r.it.supplier_id === supFilter)
+    .filter((r) => !flag || (flag === 'low' ? r.low : flag === 'nosupplier' ? !r.it.supplier_id : flag === 'nobarcode' ? !r.it.barcode : true))
+    .sort((a, b) => a.it.name.localeCompare(b.it.name))
 
-  // Not a fixed list — whatever's already in use, plus whatever is currently
-  // picked, so the dropdown never renders blank right after adding a new one.
-  const categoryOptions = useMemo(() => {
-    const set = new Set()
-    for (const it of items) if (it.category) set.add(it.category)
-    if (form.category) set.add(form.category)
-    return Array.from(set).sort()
-  }, [items, form.category])
+  const openItem = openId && openId !== 'new' ? items.find((it) => it.id === openId) : null
 
-  async function addItem() {
-    if (!form.name.trim()) return
-    setSaving(true)
-    const [row] = await sb.insert('curio_items', {
-      ...form,
-      sell_price: Number(form.sell_price) || 0,
-      order_pack_size: Number(form.order_pack_size) || 1,
-      order_pack_label: form.order_pack_label.trim() || null,
-      supplier_id: form.supplier_id || null,
-      location_id: location,
-      company_id: companyId,
-    })
-    setForm({
-      name: '',
-      category: 'Gifts',
-      count_unit: 'ea',
-      sell_price: '',
-      supplier_id: '',
-      min_units: 5,
-      max_units: 20,
-      order_pack_size: 1,
-      order_pack_label: '',
-    })
-    setSaving(false)
-    onAdd(row)
+  function unitsCell(it) {
+    if (variant === 'food') return `${it.purchase_unit || 'ea'} → ${it.conversion_factor ?? 1} ${it.recipe_unit || 'ea'}`
+    return `${it.count_unit || 'ea'}${it.order_pack_label ? ` · ${it.order_pack_label}` : Number(it.order_pack_size) > 1 ? ` · pack of ${it.order_pack_size}` : ''}`
   }
-
-  async function updateItem(id, patch) {
-    const [row] = await sb.update('curio_items', { id }, patch)
-    onUpdate(row)
-  }
-
-  async function deactivate(id) {
-    await sb.update('curio_items', { id }, { active: false })
-    onRemove(id)
+  function subline(it) {
+    const bits = [it.category, supplierName(it.supplier_id)]
+    if (variant === 'food') bits.push('VAT from slip')
+    if (variant === 'bev') bits.push(it.pricing_tier || 'Included')
+    if (variant === 'curio' && Number(it.sell_price) > 0) bits.push(`sells at R ${fmt(it.sell_price)}`)
+    return bits.filter(Boolean).join(' · ')
   }
 
   return (
     <>
-      <div style={styles.card}>
-        <div style={styles.cardTitle}>Add item</div>
-        <div style={styles.formGrid}>
-          <div>
-            <label style={styles.label}>Name</label>
-            <input style={styles.input} value={form.name} onChange={(e) => setForm({ ...form, name: e.target.value })} />
-          </div>
-          <div>
-            <label style={styles.label}>Category</label>
-            <CategoryPicker
-              value={form.category}
-              options={categoryOptions}
-              onChange={(v) => setForm({ ...form, category: v })}
-            />
-          </div>
-          <div>
-            <label style={styles.label}>Count unit</label>
-            <input style={styles.input} value={form.count_unit} onChange={(e) => setForm({ ...form, count_unit: e.target.value })} />
-          </div>
-          <div>
-            <label style={styles.label}>Sell price (R)</label>
-            <input
-              type="number" inputMode="decimal"
-              style={styles.input}
-              value={form.sell_price}
-              onChange={(e) => setForm({ ...form, sell_price: e.target.value })}
-            />
-          </div>
-          <div>
-            <label style={styles.label}>Order pack size</label>
-            <input
-              type="number" inputMode="decimal"
-              style={styles.input}
-              value={form.order_pack_size}
-              onChange={(e) => setForm({ ...form, order_pack_size: e.target.value })}
-            />
-          </div>
-          <div>
-            <label style={styles.label}>Order pack label</label>
-            <input
-              style={styles.input}
-              placeholder="e.g. box of 12"
-              value={form.order_pack_label}
-              onChange={(e) => setForm({ ...form, order_pack_label: e.target.value })}
-            />
-          </div>
-          <div>
-            <label style={styles.label}>Supplier</label>
-            <SearchableSelect
-              value={form.supplier_id}
-              onChange={(v) => setForm({ ...form, supplier_id: v })}
-              options={suppliers.map((s) => ({ value: s.id, label: s.name }))}
-              placeholder="No supplier"
-            />
-          </div>
-          <div>
-            <label style={styles.label}>Min units</label>
-            <input
-              type="number" inputMode="decimal"
-              style={styles.input}
-              value={form.min_units}
-              onChange={(e) => setForm({ ...form, min_units: e.target.value })}
-            />
-          </div>
-          <div>
-            <label style={styles.label}>Max units</label>
-            <input
-              type="number" inputMode="decimal"
-              style={styles.input}
-              value={form.max_units}
-              onChange={(e) => setForm({ ...form, max_units: e.target.value })}
-            />
+      <div className="page-head">
+        <div>
+          <div style={{ fontSize: 13, color: colors.muted }}>
+            {items.length} active item{items.length === 1 ? '' : 's'}
+            {belowMin ? ` · ${belowMin} below minimum` : ''}
+            {noSupplier ? ` · ${noSupplier} with no supplier` : ''}
           </div>
         </div>
-        <div style={{ fontSize: 12, color: colors.muted, marginTop: 8 }}>
-          Sell price is the retail price — used for the Dashboard's sell-through estimate and for
-          gauging write-off value at retail rather than cost. Order pack size is how many count
-          units make up one thing you order — e.g. 12 for a box of 12 keyrings. Leave it at 1 if you
-          order in the same unit you count in. Orders round up to whole packs so you never
-          under-order.
-        </div>
-        <button style={styles.button} onClick={addItem} disabled={saving}>
-          {saving ? 'Adding…' : 'Add item'}
-        </button>
+        <div className="actions"><button style={styles.button} onClick={() => setOpenId('new')}>+ Add item</button></div>
+      </div>
+      <div className="toolbar">
+        <input placeholder="Search name or barcode…" value={search} onChange={(e) => setSearch(e.target.value)} />
+        <select value={catFilter} onChange={(e) => setCatFilter(e.target.value)}>
+          <option value="">All categories</option>
+          {categoryOptions.map((c) => <option key={c} value={c}>{c}</option>)}
+        </select>
+        <select value={supFilter} onChange={(e) => setSupFilter(e.target.value)}>
+          <option value="">All suppliers</option>
+          {suppliers.map((s) => <option key={s.id} value={s.id}>{s.name}</option>)}
+        </select>
+        <select value={flag} onChange={(e) => setFlag(e.target.value)}>
+          <option value="">Everything</option>
+          <option value="low">Below minimum</option>
+          <option value="nosupplier">No supplier</option>
+          <option value="nobarcode">No barcode</option>
+        </select>
       </div>
 
       <div style={styles.card}>
-        <div style={styles.cardTitle}>{items.length} active items</div>
         <div style={styles.tableWrap}>
-        <table style={styles.table}>
-          <thead>
-            <tr>
-              <th style={styles.th}>Name</th>
-              <th style={styles.th}>Category</th>
-              <th style={styles.th}>Supplier</th>
-              <th style={styles.th}>Unit</th>
-              <th style={styles.th}>Sell price</th>
-              <th style={styles.th}>Barcode</th>
-              <th style={styles.th}>Min</th>
-              <th style={styles.th}>Max</th>
-              <th style={styles.th}>Pack size</th>
-              <th style={styles.th}>Pack label</th>
-              <th style={styles.th}>W/Avg cost</th>
-              <th style={styles.th}>Stock value</th>
-              <th style={styles.th}></th>
-            </tr>
-          </thead>
-          <tbody>
-            {items.map((it) => {
-              const m = metricsByItem?.[it.id]
-              const currentUnits = m ? (m.hasCount ? m.closingCount : m.theoreticalClosing) : null
-              const currentValue = m ? currentUnits * m.weightedAvgCost : null
-              return (
-                <tr key={it.id}>
-                  <td style={styles.td}>{it.name}</td>
-                  <td style={styles.td}>
-                    {/* Was read-only, so a category typed wrongly at creation
-                        could only be corrected with SQL. Editable now. */}
-                    <CategoryPicker
-                      value={it.category}
-                      options={categoryOptions}
-                      onChange={(v) => updateItem(it.id, { category: v })}
-                      inputStyle={{ ...styles.smallInput, width: 150 }}
-                    />
-                  </td>
-                  <td style={styles.td}>
-                    <SearchableSelect
-                      value={it.supplier_id || ''}
-                      onChange={(v) => updateItem(it.id, { supplier_id: v || null })}
-                      options={suppliers.map((s) => ({ value: s.id, label: s.name }))}
-                      placeholder="No supplier"
-                      inputStyle={styles.smallInput}
-                      style={{ minWidth: 120 }}
-                    />
-                  </td>
-                  <td style={styles.td}>{it.count_unit}</td>
-                  <td style={styles.td}>
-                    <input
-                      type="number" inputMode="decimal"
-                      style={styles.smallInput}
-                      defaultValue={it.sell_price ?? 0}
-                      onBlur={(e) => updateItem(it.id, { sell_price: Number(e.target.value) || 0 })}
-                    />
-                  </td>
-                  <td style={styles.td}>
-                    <input
-                      type="text"
-                      style={{ ...styles.smallInput, width: 130, fontFamily: fonts.mono }}
-                      defaultValue={it.barcode || ''}
-                      placeholder="unlinked"
-                      onBlur={(e) => updateItem(it.id, { barcode: e.target.value.trim() || null })}
-                    />
-                  </td>
-                  <td style={styles.td}>
-                    <input
-                      type="number" inputMode="decimal"
-                      style={styles.smallInput}
-                      defaultValue={it.min_units}
-                      onBlur={(e) => updateItem(it.id, { min_units: Number(e.target.value) })}
-                    />
-                  </td>
-                  <td style={styles.td}>
-                    <input
-                      type="number" inputMode="decimal"
-                      style={styles.smallInput}
-                      defaultValue={it.max_units}
-                      onBlur={(e) => updateItem(it.id, { max_units: Number(e.target.value) })}
-                    />
-                  </td>
-                  <td style={styles.td}>
-                    <input
-                      type="number" inputMode="decimal"
-                      style={{ ...styles.smallInput, width: 70 }}
-                      defaultValue={it.order_pack_size ?? 1}
-                      onBlur={(e) => updateItem(it.id, { order_pack_size: Number(e.target.value) || 1 })}
-                    />
-                  </td>
-                  <td style={styles.td}>
-                    <input
-                      type="text"
-                      style={{ ...styles.smallInput, width: 130 }}
-                      defaultValue={it.order_pack_label || ''}
-                      placeholder="e.g. box of 12"
-                      onBlur={(e) => updateItem(it.id, { order_pack_label: e.target.value.trim() || null })}
-                    />
-                  </td>
-                  <td style={styles.tdNum}>{m ? `R ${fmt(m.weightedAvgCost)}` : '—'}</td>
-                  <td style={styles.tdNum}>{m ? `R ${fmt(currentValue)}` : '—'}</td>
-                  <td style={styles.td}>
-                    <button style={styles.buttonDanger} onClick={() => deactivate(it.id)}>
-                      Remove
-                    </button>
-                  </td>
-                </tr>
-              )
-            })}
-          </tbody>
-        </table>
+          <table style={styles.table}>
+            <thead>
+              <tr>
+                <th style={styles.th}>Item</th>
+                <th style={styles.th}>Units</th>
+                <th style={styles.th}>Stock level</th>
+                <th style={styles.th}>W/Avg cost</th>
+                <th style={styles.th}>Stock value</th>
+                <th style={styles.th}></th>
+              </tr>
+            </thead>
+            <tbody>
+              {rows.map(({ it, m, units, value, min, low, out }) => {
+                const max = Number(it.max_units) || 0
+                const pct = units == null ? 0 : max > 0 ? Math.min(100, Math.max(0, (units / max) * 100)) : min > 0 ? Math.min(100, (units / (min * 2)) * 100) : 100
+                return (
+                  <tr key={it.id} className="row-open" onClick={() => setOpenId(it.id)}>
+                    <td style={{ ...styles.td, whiteSpace: 'normal' }}>
+                      <strong>{it.name}</strong>
+                      <span className="sub2">{subline(it)}{!it.supplier_id ? ' · no supplier' : ''}{!it.barcode ? ' · no barcode' : ''}</span>
+                    </td>
+                    <td style={styles.td}>{unitsCell(it)}</td>
+                    <td style={styles.td}>
+                      <span className={`lvl${low ? ' low' : ''}`}>
+                        <span className="bar"><i style={{ width: `${pct}%` }} /></span>
+                        <span>{units == null ? '—' : fmt(units, 0)}{min > 0 ? ` / min ${fmt(min, 0)}` : ''}</span>
+                        {out ? <span style={styles.badge('bad')}>Out</span> : low ? <span style={styles.badge('bad')}>Low</span> : null}
+                      </span>
+                    </td>
+                    <td style={styles.tdNum}>{m ? `R ${fmt(m.weightedAvgCost)}` : '—'}</td>
+                    <td style={styles.tdNum}>{value != null ? `R ${fmt(value)}` : '—'}</td>
+                    <td style={{ ...styles.td, textAlign: 'right' }}>
+                      <button style={styles.buttonGhost} onClick={(e) => { e.stopPropagation(); setOpenId(it.id) }}>Open</button>
+                    </td>
+                  </tr>
+                )
+              })}
+              {rows.length === 0 && (
+                <tr><td style={styles.td} colSpan={6}>{items.length === 0 ? 'No items yet — add one with the button above.' : 'Nothing matches those filters.'}</td></tr>
+              )}
+            </tbody>
+          </table>
+        </div>
+        <div style={{ fontSize: 11, color: colors.muted, marginTop: 8 }}>
+          Showing {rows.length} of {items.length} · units, packs, min/max and the barcode are edited in the item panel — click a row.
         </div>
       </div>
+
+      {(openId === 'new' || openItem) && (
+        <ItemDrawer
+          key={openId}
+          item={openItem}
+          variant={variant}
+          table={table}
+          unitOptions={unitOptions}
+          metrics={openItem ? metricsByItem?.[openItem.id] : null}
+          categoryOptions={categoryOptions}
+          suppliers={suppliers}
+          location={location}
+          companyId={companyId}
+          purchases={openItem ? purchases.filter((p) => p.item_id === openItem.id) : []}
+          issues={openItem ? issues.filter((i) => i.item_id === openItem.id) : []}
+          transfers={openItem ? (transfers || []).filter((t) => t.item_id === openItem.id) : []}
+          onClose={() => setOpenId(null)}
+          onSaved={(row, isNew) => { if (isNew) { onAdd(row); setOpenId(row.id) } else onUpdate(row) }}
+          onDeactivated={(id) => { onRemove(id); setOpenId(null) }}
+        />
+      )}
     </>
+  )
+}
+
+function ItemDrawer({ item, variant, table, unitOptions, metrics: m, categoryOptions, suppliers, location, companyId, purchases, issues, transfers, onClose, onSaved, onDeactivated }) {
+  const isNew = !item
+  const [tab, setTab] = useState('basics')
+  const [form, setForm] = useState(() => (isNew ? blankItem(variant) : itemToForm(item, variant)))
+  const [saving, setSaving] = useState(false)
+  const [error, setError] = useState('')
+  const [message, setMessage] = useState('')
+  const f = (k) => (e) => setForm((x) => ({ ...x, [k]: e.target.value }))
+  const set = (k) => (v) => setForm((x) => ({ ...x, [k]: v }))
+  const dirty = isNew || Object.keys(form).some((k) => String(form[k] ?? '') !== String(itemToForm(item, variant)[k] ?? ''))
+  const units = stockNow(m)
+  const value = m && units != null ? units * m.weightedAvgCost : null
+  const min = Number(form.min_units) || 0
+  const max = Number(form.max_units) || 0
+  const packSize = Number(form.order_pack_size) || 1
+  const shortfall = units != null && min > 0 && units < min ? Math.max(0, (max > 0 ? max : min) - units) : 0
+  const packsToOrder = shortfall > 0 ? Math.ceil(shortfall / packSize) : 0
+  const lastPurchase = [...purchases].sort((a, b) => String(b.date || '').localeCompare(String(a.date || '')))[0]
+  const supplierName = (id) => suppliers.find((s) => s.id === id)?.name || null
+
+  async function save(e) {
+    e.preventDefault()
+    setError(''); setMessage('')
+    if (!form.name.trim()) { setError('Give the item a name.'); return }
+    setSaving(true)
+    try {
+      const patch = formToPatch(form, variant)
+      let row
+      if (isNew) {
+        ;[row] = await sb.insert(table, { ...patch, company_id: companyId, location_id: location })
+        setMessage('Added.')
+      } else {
+        ;[row] = await sb.update(table, { id: item.id }, patch)
+        setMessage('Saved.')
+      }
+      onSaved(row, isNew)
+    } catch (err) {
+      setError(err.message || 'Could not save.')
+    } finally {
+      setSaving(false)
+    }
+  }
+  async function deactivate() {
+    if (!window.confirm(`Remove ${item.name} from the active list? Its history stays.`)) return
+    await sb.update(table, { id: item.id }, { active: false })
+    onDeactivated(item.id)
+  }
+
+  const tabs = isNew ? ITEM_TABS.filter((t) => t.id !== 'history') : ITEM_TABS
+  const history = useMemo(() => {
+    const rows = []
+    for (const p of purchases) rows.push({ date: p.date, what: `Purchase${supplierName(p.supplier_id) ? ` — ${supplierName(p.supplier_id)}` : ''}${p.slip_id ? ' (slip)' : ''}`, qty: Number(p.units || 0), cost: Number(p.total_cost_excl_vat || 0) })
+    for (const i of issues) rows.push({ date: i.date, what: `Issue${i.reason ? ` — ${i.reason}` : ''}${i.destination ? ` · ${i.destination}` : ''}`, qty: -Number(i.qty || 0), cost: null })
+    for (const t of transfers) {
+      const outgoing = t.from_location_id === location
+      rows.push({ date: t.sent_date || t.received_date, what: outgoing ? `Transfer to ${t.to_location_id}` : `Transfer from ${t.from_location_id}`, qty: outgoing ? -Number(t.qty || 0) : Number(t.received_qty ?? t.qty ?? 0), cost: null })
+    }
+    return rows.sort((a, b) => String(b.date || '').localeCompare(String(a.date || '')))
+  }, [purchases, issues, transfers, location])
+
+  const meta = isNew ? 'Name, category and units first — stock levels once it exists.' : (
+    <>
+      <span>{[form.category, supplierName(item.supplier_id), units != null ? `${fmt(units, 0)} in stock` : null].filter(Boolean).join(' · ')}</span>
+      {units != null && min > 0 && units < min && <span style={styles.badge('bad')}>Below minimum</span>}
+    </>
+  )
+  const inputStyle = { ...styles.input }
+  const footer = (
+    <>
+      <button type="submit" form="item-form" style={styles.button} disabled={saving || !dirty || tab === 'history'}>{saving ? 'Saving…' : isNew ? 'Add item' : 'Save changes'}</button>
+      <button type="button" style={styles.buttonGhost} onClick={onClose}>{dirty && !isNew ? 'Cancel' : 'Close'}</button>
+      {!isNew && <button type="button" style={styles.buttonDanger} onClick={deactivate}>Deactivate</button>}
+      <span className="hint">{error ? <span style={{ color: colors.danger }}>{error}</span> : message || (dirty && !isNew ? 'Unsaved changes' : 'Esc closes')}</span>
+    </>
+  )
+
+  return (
+    <Drawer title={isNew ? 'New item' : item.name} meta={meta} tabs={tabs} tab={tab} onTab={setTab} onClose={onClose} footer={footer}>
+      <form id="item-form" onSubmit={save}>
+        {tab === 'basics' && (
+          <div className="drawer-grid">
+            <div className="field full"><label style={styles.label}>Name</label><input style={inputStyle} value={form.name} onChange={f('name')} autoFocus={isNew} /></div>
+            <div className="field"><label style={styles.label}>Category</label>
+              <CategoryPicker value={form.category} options={categoryOptions} onChange={set('category')} />
+            </div>
+            <div className="field"><label style={styles.label}>Supplier</label>
+              <SearchableSelect value={form.supplier_id || ''} onChange={(v) => set('supplier_id')(v || '')} options={suppliers.map((s) => ({ value: s.id, label: s.name }))} placeholder="No supplier" />
+            </div>
+            {variant === 'food' && (
+              <div className="field"><label style={styles.label}>VAT</label>
+                <select style={inputStyle} value={form.vat_treatment || ''} onChange={f('vat_treatment')}>
+                  <option value="">Work it out from the slip</option>
+                  <option value="standard_15">15% VAT</option>
+                  <option value="zero_rated">Zero-rated (no VAT)</option>
+                </select>
+                <div className="help">Set here, this wins over any slip marker from now on. "From the slip" hands the judgement back to the scanner.</div>
+              </div>
+            )}
+            {variant === 'bev' && (
+              <div className="field"><label style={styles.label}>Pricing tier</label>
+                <select style={inputStyle} value={form.pricing_tier || 'Included'} onChange={f('pricing_tier')}>
+                  <option value="Included">Included (all-inclusive)</option>
+                  <option value="Premium">Premium</option>
+                </select>
+              </div>
+            )}
+            {variant === 'curio' && (
+              <div className="field"><label style={styles.label}>Sell price (R)</label><input type="number" inputMode="decimal" step="0.01" min="0" style={inputStyle} value={form.sell_price} onChange={f('sell_price')} /></div>
+            )}
+            <div className="field"><label style={styles.label}>Barcode</label>
+              <input style={{ ...inputStyle, fontFamily: fonts.mono }} value={form.barcode || ''} onChange={f('barcode')} placeholder="unlinked" />
+              <div className="help">Scan on the Purchases tab to fill this.</div>
+            </div>
+          </div>
+        )}
+
+        {tab === 'units' && (
+          <>
+            <div className="drawer-grid">
+              {variant === 'food' ? (
+                <>
+                  <div className="field"><label style={styles.label}>Purchase unit</label>
+                    <select style={inputStyle} value={form.purchase_unit} onChange={f('purchase_unit')}>{(unitOptions || []).map((u) => <option key={u} value={u}>{u}</option>)}</select>
+                    <div className="help">How it arrives on the slip.</div>
+                  </div>
+                  <div className="field"><label style={styles.label}>Recipe unit</label>
+                    <select style={inputStyle} value={form.recipe_unit} onChange={f('recipe_unit')}>{(unitOptions || []).map((u) => <option key={u} value={u}>{u}</option>)}</select>
+                    <div className="help">How the kitchen uses it.</div>
+                  </div>
+                  <div className="field"><label style={styles.label}>Recipe units per purchase unit</label><input type="number" inputMode="decimal" style={inputStyle} value={form.conversion_factor} onChange={f('conversion_factor')} /></div>
+                  <div className="field"><label style={styles.label}>Cost per recipe unit</label>
+                    <input style={inputStyle} disabled value={m && Number(form.conversion_factor) > 0 ? `R ${fmt(m.weightedAvgCost / Number(form.conversion_factor), 4)} / ${form.recipe_unit}` : '—'} />
+                  </div>
+                </>
+              ) : (
+                <div className="field"><label style={styles.label}>Count / serving unit</label><input style={inputStyle} value={form.count_unit || ''} onChange={f('count_unit')} placeholder="e.g. bottle, can, ea" /></div>
+              )}
+            </div>
+            <div className="drawer-sect">Ordering</div>
+            <div className="drawer-grid">
+              <div className="field"><label style={styles.label}>Order pack size ({variant === 'food' ? 'purchase' : 'count'} units per pack)</label><input type="number" inputMode="decimal" style={inputStyle} value={form.order_pack_size} onChange={f('order_pack_size')} /></div>
+              <div className="field"><label style={styles.label}>Pack label</label>
+                <input style={inputStyle} value={form.order_pack_label || ''} onChange={f('order_pack_label')} placeholder={variant === 'food' ? 'e.g. 6-pack' : 'e.g. 750ml bottle, case of 12'} />
+                <div className="help">Shown on the Orders list so the order reads "2 × {form.order_pack_label || 'pack'}".</div>
+              </div>
+            </div>
+          </>
+        )}
+
+        {tab === 'levels' && (
+          <>
+            <div className="drawer-grid">
+              <div className="field"><label style={styles.label}>Minimum units</label><input type="number" inputMode="decimal" style={inputStyle} value={form.min_units} onChange={f('min_units')} /><div className="help">Below this the item shows on Orders. 0 = no alert.</div></div>
+              <div className="field"><label style={styles.label}>Maximum units</label><input type="number" inputMode="decimal" style={inputStyle} value={form.max_units} onChange={f('max_units')} /><div className="help">Orders top up to this.</div></div>
+            </div>
+            {!isNew && (
+              <>
+                <div className="drawer-sect">Right now</div>
+                <div className="drawer-stat"><span>On hand</span><b>{units == null ? '—' : `${fmt(units, 0)} ${variant === 'food' ? form.purchase_unit : form.count_unit}`}{m?.hasCount ? ' (counted)' : units != null ? ' (theoretical)' : ''}</b></div>
+                <div className="drawer-stat"><span>Weighted average cost</span><span>{m ? `R ${fmt(m.weightedAvgCost)}` : '—'}</span></div>
+                <div className="drawer-stat"><span>Stock value</span><span>{value != null ? `R ${fmt(value)}` : '—'}</span></div>
+                <div className="drawer-stat"><span>Last purchase (this period)</span><span>{lastPurchase ? `${lastPurchase.date} · ${fmt(lastPurchase.units, 0)} · R ${fmt(lastPurchase.total_cost_excl_vat)}${supplierName(lastPurchase.supplier_id) ? ` · ${supplierName(lastPurchase.supplier_id)}` : ''}` : 'none'}</span></div>
+                <div className="drawer-stat"><span>Suggested order</span><span>{shortfall > 0 ? `${fmt(shortfall, 0)} → ${packsToOrder} × ${form.order_pack_label || `pack of ${packSize}`}` : 'nothing — above minimum'}</span></div>
+              </>
+            )}
+          </>
+        )}
+
+        {tab === 'history' && !isNew && (
+          <>
+            <table style={styles.table}>
+              <thead><tr><th style={styles.th}>Date</th><th style={styles.th}>What</th><th style={{ ...styles.th, textAlign: 'right' }}>Qty</th><th style={{ ...styles.th, textAlign: 'right' }}>Cost</th></tr></thead>
+              <tbody>
+                {history.map((h, i) => (
+                  <tr key={i}><td style={styles.td}>{h.date}</td><td style={{ ...styles.td, whiteSpace: 'normal' }}>{h.what}</td><td style={styles.tdNum}>{h.qty > 0 ? '+' : ''}{fmt(h.qty, 0)}</td><td style={styles.tdNum}>{h.cost != null ? `R ${fmt(h.cost)}` : ''}</td></tr>
+                ))}
+                {history.length === 0 && <tr><td style={styles.td} colSpan={4}>Nothing this period.</td></tr>}
+              </tbody>
+            </table>
+            <div style={{ fontSize: 11, color: colors.muted, marginTop: 8 }}>This period only — purchases, issues and transfers for this lodge.</div>
+          </>
+        )}
+      </form>
+    </Drawer>
   )
 }
 

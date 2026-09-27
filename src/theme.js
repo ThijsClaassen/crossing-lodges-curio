@@ -443,4 +443,45 @@ export const css = `
   .role-badge{border-color:var(--sidebar-line);color:var(--sidebar-muted)}
   .bottom-nav,.nav-sheet{background:var(--sidebar-bg);color:var(--sidebar-text)}
   .nav-sheet-item.active{color:var(--accent-on-dark);background:var(--accent-on-dark-wash)}
+
+/* Drawer — the detail pattern (readability pass, 2026-09-27). Same classes as
+   the Ops / HR / Maintenance / Finance drawers: title + meta, tabs, scrolling
+   body, fixed footer, sliding in from the right. */
+.drawer-scrim{position:fixed;inset:0;background:rgba(22,32,46,.35);z-index:200}
+.drawer{position:fixed;top:0;right:0;bottom:0;width:640px;max-width:100%;background:var(--surface-raised);box-shadow:var(--shadow-lg);z-index:201;display:flex;flex-direction:column;animation:drawer-in .18s ease-out}
+@keyframes drawer-in{from{transform:translateX(24px);opacity:0}to{transform:none;opacity:1}}
+.drawer-head{padding:18px 24px 0;border-bottom:1px solid var(--line)}
+.drawer-title{display:flex;justify-content:space-between;align-items:flex-start;gap:12px}
+.drawer-title h2{margin:0;font-size:18px;font-weight:600;color:var(--text);font-family:'Inter',system-ui,sans-serif}
+.drawer-meta{color:var(--text-muted);font-size:12.5px;margin-top:3px;display:flex;gap:8px;align-items:center;flex-wrap:wrap}
+.drawer-x{background:none;border:none;font-size:22px;color:var(--text-muted);cursor:pointer;line-height:1;padding:0 2px}
+.drawer-tabs{display:flex;gap:2px;margin-top:14px;overflow-x:auto}
+.drawer-tabs button{background:none;border:none;border-bottom:2px solid transparent;border-radius:0;padding:10px 12px;font:500 13px 'Inter',system-ui,sans-serif;color:var(--text-muted);cursor:pointer;margin-bottom:-1px;white-space:nowrap}
+.drawer-tabs button.active{color:var(--accent);border-bottom-color:var(--accent);font-weight:600}
+.drawer-tabs button .n{margin-left:5px;font-size:11px;color:var(--text-muted);background:var(--surface-overlay);border-radius:999px;padding:1px 6px}
+.drawer-body{flex:1;overflow:auto;padding:20px 24px}
+.drawer-foot{padding:14px 24px;border-top:1px solid var(--line);display:flex;gap:10px;align-items:center;background:var(--surface-raised);flex-wrap:wrap}
+.drawer-foot .hint{margin-left:auto;color:var(--text-muted);font-size:12px}
+.drawer-sect{font-size:11px;letter-spacing:.12em;text-transform:uppercase;color:var(--accent);font-weight:700;margin:18px 0 10px}
+.drawer-sect:first-child{margin-top:0}
+.drawer-note{background:var(--accent-wash);border-radius:8px;padding:10px 12px;font-size:12.5px;color:var(--text);line-height:1.5}
+.drawer-grid{display:grid;grid-template-columns:1fr 1fr;gap:14px 16px}
+.drawer-grid .full{grid-column:1/-1}
+.drawer-grid .help,.field .help{font-size:11.5px;color:var(--text-muted);margin-top:5px;line-height:1.45}
+.drawer-stat{display:flex;justify-content:space-between;font-size:13px;padding:6px 0;border-bottom:1px solid var(--line);gap:12px}
+.drawer-stat b{color:var(--text)}
+/* The list behind the drawer */
+tr.row-open{cursor:pointer}
+tr.row-open:hover td{background:var(--accent-wash)}
+td .sub2{display:block;color:var(--text-muted);font-size:11.5px;margin-top:2px;font-weight:400}
+.toolbar{display:flex;gap:10px;align-items:center;flex-wrap:wrap;margin-bottom:12px}
+.toolbar input,.toolbar select{padding:8px 10px;border:1px solid var(--line);border-radius:8px;background:var(--surface-raised);color:var(--text);font-family:'Inter',system-ui,sans-serif;font-size:13px}
+.toolbar input{flex:1;min-width:180px;max-width:320px}
+.page-head{display:flex;align-items:flex-start;gap:12px;flex-wrap:wrap;margin-bottom:10px}
+.page-head .actions{margin-left:auto;display:flex;gap:8px}
+.lvl{display:inline-flex;align-items:center;gap:8px}
+.lvl .bar{width:70px;height:6px;background:var(--surface-overlay);border-radius:999px;overflow:hidden;display:inline-block}
+.lvl .bar i{display:block;height:100%;background:var(--success)}
+.lvl.low .bar i{background:var(--critical)}
+@media (max-width:768px){.drawer{width:100%}.drawer-body{padding:16px}.drawer-head{padding:14px 16px 0}.drawer-foot{padding:12px 16px}.drawer-grid{grid-template-columns:1fr}}
 `
