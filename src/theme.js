@@ -484,4 +484,5 @@ td .sub2{display:block;color:var(--text-muted);font-size:11.5px;margin-top:2px;f
 .lvl .bar i{display:block;height:100%;background:var(--success)}
 .lvl.low .bar i{background:var(--critical)}
 @media (max-width:768px){.drawer{width:100%}.drawer-body{padding:16px}.drawer-head{padding:14px 16px 0}.drawer-foot{padding:12px 16px}.drawer-grid{grid-template-columns:1fr}}
+tr.group-row td{background:var(--surface-overlay);border-top:2px solid var(--line);padding-top:8px;padding-bottom:7px}
 `

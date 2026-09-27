@@ -2191,7 +2191,20 @@ function ItemsTab({ items, metricsByItem, location, companyId, suppliers, onAdd,
     .filter((r) => !catFilter || r.it.category === catFilter)
     .filter((r) => !supFilter || r.it.supplier_id === supFilter)
     .filter((r) => !flag || (flag === 'low' ? r.low : flag === 'nosupplier' ? !r.it.supplier_id : flag === 'nobarcode' ? !r.it.barcode : true))
-    .sort((a, b) => a.it.name.localeCompare(b.it.name))
+    .sort((a, b) => (a.it.category || '').localeCompare(b.it.category || '') || a.it.name.localeCompare(b.it.name))
+
+  // Grouped by category with a header row each (count, stock value) — Thijs
+  // asked for the category grouping to stay when the table was slimmed down
+  // (2026-09-27), same as the fixed asset register.
+  const groups = []
+  for (const r of rows) {
+    const key = r.it.category || 'Uncategorised'
+    let g = groups[groups.length - 1]
+    if (!g || g.key !== key) { g = { key, rows: [], value: 0, low: 0 }; groups.push(g) }
+    g.rows.push(r)
+    g.value += r.value || 0
+    if (r.low) g.low++
+  }
 
   const openItem = openId && openId !== 'new' ? items.find((it) => it.id === openId) : null
 
@@ -2251,7 +2264,16 @@ function ItemsTab({ items, metricsByItem, location, companyId, suppliers, onAdd,
               </tr>
             </thead>
             <tbody>
-              {rows.map(({ it, m, units, value, min, low, out }) => {
+              {groups.map((g) => (
+                <Fragment key={g.key}>
+                  <tr className="group-row">
+                    <td style={styles.td} colSpan={4}>
+                      <strong>{g.key}</strong> <span style={{ color: colors.muted, fontSize: 12 }}>({g.rows.length}{g.low ? ` · ${g.low} low` : ''})</span>
+                    </td>
+                    <td style={styles.tdNum}><strong>R {fmt(g.value)}</strong></td>
+                    <td style={styles.td} />
+                  </tr>
+                  {g.rows.map(({ it, m, units, value, min, low, out }) => {
                 const max = Number(it.max_units) || 0
                 const pct = units == null ? 0 : max > 0 ? Math.min(100, Math.max(0, (units / max) * 100)) : min > 0 ? Math.min(100, (units / (min * 2)) * 100) : 100
                 return (
@@ -2275,7 +2297,9 @@ function ItemsTab({ items, metricsByItem, location, companyId, suppliers, onAdd,
                     </td>
                   </tr>
                 )
-              })}
+                  })}
+                </Fragment>
+              ))}
               {rows.length === 0 && (
                 <tr><td style={styles.td} colSpan={6}>{items.length === 0 ? 'No items yet — add one with the button above.' : 'Nothing matches those filters.'}</td></tr>
               )}
