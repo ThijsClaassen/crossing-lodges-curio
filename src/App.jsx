@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useRef, useState } from 'react'
+import { useEffect, useMemo, useRef, useState, Fragment } from 'react'
 import { sb, LOCATIONS, currentPeriod } from './sb.js'
 import { colors, fonts, css } from './theme.js'
 import BarcodeScanner from './BarcodeScanner.jsx'
@@ -18,7 +18,9 @@ import {
   addPendingCharges,
   billPendingCharges,
   deletePendingCharge,
+  chargeMembersFromSlip,
 } from './memberPurchase.js'
+import { wholeLine, validateSplits, planWrites, proRata } from './splitLines.js'
 
 // ---------------------------------------------------------------------------
 // Auth helpers — real Supabase Auth from day one (Curio Stock is app #7 of
@@ -29,6 +31,15 @@ import {
 // #type=recovery hash fragment — read once, synchronously, on first render,
 // before supabase-js has a chance to process and clear it.
 // ---------------------------------------------------------------------------
+
+// Deep links from the Finance Dashboard (#489, 2026-09-27): ?page=<tab id>
+// opens that tab, ?loc=<lodge id> picks that lodge. Read once at mount; an
+// unknown id falls back to the default so a stale link never breaks the app.
+function urlParam(name) {
+  if (typeof window === 'undefined') return null
+  return new URLSearchParams(window.location.search).get(name)
+}
+
 function getAuthHashType() {
   if (typeof window === 'undefined' || !window.location.hash) return null
   return new URLSearchParams(window.location.hash.slice(1)).get('type')
@@ -752,7 +763,7 @@ function AuthenticatedApp() {
   async function logout() {
     await supabase.auth.signOut()
   }
-  const [location, setLocation] = useState('ZC')
+  const [location, setLocation] = useState(() => urlParam('loc') || 'ZC')
   // 'ZC' is only a first guess: this state initialises before the lodge list
   // has loaded (CompanyContext fetches it), and another company won't have a
   // lodge called ZC at all. Once LOCATIONS is populated — and again whenever
@@ -771,7 +782,7 @@ function AuthenticatedApp() {
     // no such key, and the dashboard read loc.dieselIssues off undefined.
   }, [companyId, location, companyLoading])
   const [period, setPeriod] = useState(currentPeriod())
-  const [tab, setTab] = useState('dashboard')
+  const [tab, setTab] = useState(() => urlParam('page') || 'dashboard')
   const [menuOpen, setMenuOpen] = useState(false)
   const [loading, setLoading] = useState(true)
   const [items, setItems] = useState([])
@@ -2585,6 +2596,7 @@ function SlipScanCard({ items, suppliers, location, onApproved, companyId, onSli
           // Ticked = don't put this line into shop stock at all, stage it
           // as a member charge instead (see memberPurchase.js).
           billToMember: false,
+          splits: wholeLine('lodge', li.qty ?? 1),
         }
       })
 
@@ -2605,8 +2617,27 @@ function SlipScanCard({ items, suppliers, location, onApproved, companyId, onSli
   }
 
   function updateRow(key, patch) {
-    setReview((r) => ({ ...r, rows: r.rows.map((row) => (row.key === key ? { ...row, ...patch } : row)) }))
+    setReview((r) => ({ ...r, rows: r.rows.map((row) => {
+      if (row.key !== key) return row
+      const next = { ...row, ...patch }
+      // A single-destination line follows its quantity; a real split is the
+      // user's own numbers and is left alone (the check will flag a mismatch).
+      if ('qty' in patch && next.splits && next.splits.length === 1) next.splits = [{ ...next.splits[0], qty: Number(patch.qty) || 0 }]
+      return next
+    }) }))
   }
+  // Bill-to picker and quantity split (#508, same engine as Maintenance).
+  const [billMembers, setBillMembers] = useState([])
+  useEffect(() => { if (memberBillingEnabled) listBillingMembers({ companyId }).then(setBillMembers).catch(() => setBillMembers([])) }, [companyId, memberBillingEnabled])
+  const setDestination = (key, who) => setReview((r) => ({ ...r, rows: r.rows.map((row) => {
+    if (row.key !== key) return row
+    if (who === '__split__') return { ...row, splits: row.splits.length > 1 ? row.splits : [{ who: row.splits[0]?.who || 'lodge', qty: Number(row.qty) || 0 }, { who: '', qty: 0 }] }
+    return { ...row, splits: wholeLine(who, row.qty), billToMember: who !== 'lodge' }
+  }) }))
+  const updateSplit = (key, i, patch) => setReview((r) => ({ ...r, rows: r.rows.map((row) => (row.key !== key ? row : { ...row, splits: row.splits.map((x, j) => (j === i ? { ...x, ...patch } : x)) })) }))
+  const addSplit = (key) => setReview((r) => ({ ...r, rows: r.rows.map((row) => (row.key !== key ? row : { ...row, splits: [...row.splits, { who: '', qty: 0 }] })) }))
+  const removeSplit = (key, i) => setReview((r) => ({ ...r, rows: r.rows.map((row) => (row.key !== key ? row : { ...row, splits: row.splits.filter((_, j) => j !== i) })) }))
+  const splitProblems = review ? validateSplits(review.rows) : []
 
   function setPricesIncludeVat(val) {
     setReview((r) => ({ ...r, pricesIncludeVat: val, rows: applyVatToRows(r.rows, val, r.vatRate) }))
@@ -2623,10 +2654,20 @@ function SlipScanCard({ items, suppliers, location, onApproved, companyId, onSli
   }
 
   async function approve() {
-    const toSave = review.rows.filter((r) => !r.skip && !r.billToMember && r.item_id && Number(r.qty) > 0)
-    const toMember = review.rows.filter((r) => !r.skip && r.billToMember)
-    if (toSave.length === 0 && toMember.length === 0) {
-      setSaveStatus('Nothing to save — pick an item (or tick Bill to Member) for at least one line, or cancel.')
+    // Every line is planned through splitLines.js: lodge parts -> this app's
+    // stock, named-member parts -> that member's account at once, unnamed
+    // member parts -> the pending queue. Nothing saves while a split is wrong.
+    const probs = validateSplits(review.rows)
+    if (probs.length) { setSaveStatus(`Fix before saving: ${probs.map((p) => `${p.line} — ${p.message}`).join('; ')}`); return }
+    const plan = planWrites(review.rows, {
+      lodgeAmount: (r) => Number(r.total_cost) || 0,
+      memberAmount: (r) => vatInclusiveAmount(r, review.pricesIncludeVat, review.vatRate),
+    })
+    const byKey = Object.fromEntries(review.rows.map((r) => [r.key, r]))
+    const toSave = plan.lodge.map((l) => ({ ...byKey[l.key], qty: l.qty, total_cost: l.total_cost, lineQty: l.lineQty }))
+    const toMember = plan.pending
+    if (toSave.length === 0 && plan.members.length === 0 && toMember.length === 0) {
+      setSaveStatus('Nothing to save — pick an item or a member for at least one line, or cancel.')
       return
     }
     setSaving(true)
@@ -2662,17 +2703,15 @@ function SlipScanCard({ items, suppliers, location, onApproved, companyId, onSli
       // Lines ticked "Bill to Member" never touch shop stock — they're
       // staged in member_pending_charges until someone picks who to bill.
       // Always VAT-INCLUSIVE: the member is on-charged what was paid.
+      if (plan.members.length) {
+        await chargeMembersFromSlip({ companyId, locationId: location, slipId: slip.id, chargeDate: review.date, supplier: review.supplier, parts: plan.members })
+      }
       if (toMember.length) {
         await addPendingCharges({
           companyId,
           locationId: location,
           slipId: slip.id,
-          rows: toMember.map((r) => ({
-            chargeDate: review.date,
-            description: r.raw_text || r.guessName || 'Slip line',
-            qty: r.qty ?? null,
-            amount: vatInclusiveAmount(r, review.pricesIncludeVat, review.vatRate),
-          })),
+          rows: toMember.map((r) => ({ chargeDate: review.date, description: r.description, qty: r.qty || null, amount: r.amount })),
         })
         onMemberPending?.()
       }
@@ -2680,7 +2719,8 @@ function SlipScanCard({ items, suppliers, location, onApproved, companyId, onSli
       onSlipAttached(slip)
       const parts = []
       if (toSave.length) parts.push(`${saved.length || toSave.length} purchase${(saved.length || toSave.length) === 1 ? '' : 's'}`)
-      if (toMember.length) parts.push(`${toMember.length} member line${toMember.length === 1 ? '' : 's'} staged`)
+      if (plan.members.length) parts.push(`${plan.members.length} line${plan.members.length === 1 ? '' : 's'} billed to member accounts`)
+      if (toMember.length) parts.push(`${toMember.length} line${toMember.length === 1 ? '' : 's'} waiting for a member name`)
       setSaveStatus(`Saved ${parts.join(' + ')} and attached the slip photo.`)
       setReview(null)
     } catch (err) {
@@ -2784,15 +2824,12 @@ function SlipScanCard({ items, suppliers, location, onApproved, companyId, onSli
                   <th style={styles.th}>Qty</th>
                   <th style={styles.th}>Total cost (excl. VAT)</th>
                   <th style={styles.th}>Skip</th>
-                  {memberBillingEnabled && <th style={styles.th}>Bill to Member</th>}
+                  {memberBillingEnabled && <th style={styles.th}>Bill to</th>}
                 </tr>
               </thead>
               <tbody>
-                {review.rows.map((row) => (
-                  <tr
-                    key={row.key}
-                    style={row.skip ? { opacity: 0.45 } : row.billToMember ? { background: 'rgba(184,147,90,.10)' } : undefined}
-                  >
+                {review.rows.map((row) => (<Fragment key={row.key}>
+                  <tr style={row.skip ? { opacity: 0.45 } : row.billToMember ? { background: 'rgba(184,147,90,.10)' } : undefined}>
                     <td style={styles.td}>
                       {row.raw_text}
                       <div>
@@ -2841,17 +2878,46 @@ function SlipScanCard({ items, suppliers, location, onApproved, companyId, onSli
                     </td>
                     {memberBillingEnabled && (
                       <td style={styles.td}>
-                        <input
-                          type="checkbox"
-                          checked={row.billToMember}
-                          onChange={(e) =>
-                            updateRow(row.key, { billToMember: e.target.checked, skip: e.target.checked ? false : row.skip })
-                          }
-                        />
+                        <select value={row.splits.length > 1 ? '__split__' : (row.splits[0]?.who || 'lodge')} onChange={(e) => setDestination(row.key, e.target.value)}>
+                          <option value="lodge">Lodge stock</option>
+                          {billMembers.map((m) => <option key={m.id} value={m.id}>Member: {m.name}</option>)}
+                          <option value="pending">Member — name later</option>
+                          <option value="__split__">Split…</option>
+                        </select>
                       </td>
                     )}
                   </tr>
-                ))}
+                  {memberBillingEnabled && row.splits.length > 1 && !row.skip && (() => {
+                    const memberTotal = vatInclusiveAmount(row, review.pricesIncludeVat, review.vatRate)
+                    const amounts = proRata(memberTotal, row.splits.map((x) => x.qty))
+                    const sumQty = row.splits.reduce((s, x) => s + (Number(x.qty) || 0), 0)
+                    const bad = Math.abs(sumQty - (Number(row.qty) || 0)) > 0.0001
+                    return (
+                      <tr>
+                        <td style={styles.td} colSpan={memberBillingEnabled ? 8 : 7}>
+                          <div style={{ fontSize: 12, color: colors.muted, marginBottom: 4 }}>Split {row.qty} × {row.guessName || row.raw_text} — R {fmt(memberTotal)} incl. VAT, shared by quantity</div>
+                          {row.splits.map((x, i) => (
+                            <div key={i} style={{ display: 'flex', gap: 8, alignItems: 'center', marginBottom: 4 }}>
+                              <select value={x.who} onChange={(e) => updateSplit(row.key, i, { who: e.target.value })}>
+                                <option value="">— who —</option>
+                                <option value="lodge">Lodge stock</option>
+                                {billMembers.map((m) => <option key={m.id} value={m.id}>Member: {m.name}</option>)}
+                                <option value="pending">Member — name later</option>
+                              </select>
+                              <input type="number" inputMode="decimal" style={{ width: 70 }} value={x.qty} onChange={(e) => updateSplit(row.key, i, { qty: e.target.value })} />
+                              <span style={{ fontSize: 12, color: colors.muted, minWidth: 80 }}>{x.who === 'lodge' ? '' : `R ${fmt(amounts[i] || 0)}`}</span>
+                              <button type="button" onClick={() => removeSplit(row.key, i)}>Remove</button>
+                            </div>
+                          ))}
+                          <div style={{ display: 'flex', gap: 8, alignItems: 'center' }}>
+                            <button type="button" onClick={() => addSplit(row.key)}>+ Add part</button>
+                            <span style={{ fontSize: 12, color: bad ? colors.danger : colors.ok }}>{bad ? `Parts add up to ${sumQty}, the line says ${row.qty}` : `Adds up: ${sumQty} of ${row.qty}`}</span>
+                          </div>
+                        </td>
+                      </tr>
+                    )
+                  })()}
+                </Fragment>))}
                 {review.rows.length === 0 && (
                   <tr>
                     <td style={styles.td} colSpan={memberBillingEnabled ? 6 : 5}>
@@ -2884,12 +2950,15 @@ function SlipScanCard({ items, suppliers, location, onApproved, companyId, onSli
           </div>
 
           <div style={{ ...styles.row, justifyContent: 'space-between', marginTop: 12, flexWrap: 'wrap' }}>
-            <div style={{ fontSize: 12, color: colors.muted }}>{saveStatus}</div>
+            <div style={{ fontSize: 12, color: colors.muted }}>
+              {splitProblems.length > 0 && <div style={{ color: colors.danger }}>Check before saving: {splitProblems.map((p) => `${p.line} — ${p.message}`).join('; ')}</div>}
+              {saveStatus}
+            </div>
             <div style={styles.row}>
               <button style={styles.buttonGhost} onClick={cancelReview} disabled={saving}>
                 Cancel
               </button>
-              <button style={styles.button} onClick={approve} disabled={saving}>
+              <button style={styles.button} onClick={approve} disabled={saving || splitProblems.length > 0}>
                 {saving ? 'Saving…' : 'Approve & save'}
               </button>
             </div>

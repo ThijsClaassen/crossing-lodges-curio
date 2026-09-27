@@ -111,3 +111,27 @@ export async function deletePendingCharge({ id }) {
   const { error } = await supabase.from('member_pending_charges').delete().eq('id', id)
   if (error) throw error
 }
+
+// Slip lines billed STRAIGHT to a named member (#508) — no pending queue.
+// One member_charges row per (line, member) part, with the quantity, the
+// per-unit price and the slip photo. VAT-inclusive, like every member purchase.
+export async function chargeMembersFromSlip({ companyId, locationId, slipId, chargeDate, supplier, parts }) {
+  if (!parts.length) return
+  const { data: { user } } = await supabase.auth.getUser()
+  const payload = parts.map((p) => ({
+    company_id: companyId,
+    member_id: p.member_id,
+    location_id: locationId || null,
+    charge_date: chargeDate,
+    description: `${p.qty}${p.lineQty && p.qty !== p.lineQty ? ` of ${p.lineQty}` : ''} × ${p.description}${supplier ? ` (${supplier})` : ''}`,
+    amount: Number(p.amount),
+    kind: 'disbursement',
+    source_app: 'curio',
+    qty: p.qty,
+    unit_rate: p.unit_rate,
+    slip_id: slipId || null,
+    created_by: user?.id || null,
+  }))
+  const { error } = await supabase.from('member_charges').insert(payload)
+  if (error) throw error
+}
