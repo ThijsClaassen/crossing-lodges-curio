@@ -18,7 +18,7 @@
 // these apps anyway.
 
 export const config = {
-  maxDuration: 30, // seconds — vision calls can take a few seconds longer than a typical API request
+  maxDuration: 60, // seconds — a long till slip is several images and a few thousand output tokens (#500)
 }
 
 const ANTHROPIC_MODEL = process.env.ANTHROPIC_MODEL || 'claude-sonnet-5'
@@ -50,6 +50,44 @@ Rules:
 - Report prices exactly as printed on the slip — do not attempt to add or remove VAT yourself, that's handled by the app afterward based on amounts_include_vat_guess and vat_rate_guess.
 - If the image isn't a purchase slip at all, or nothing is legible, return an empty line_items array.`
 
+// Read a long slip in pieces — one JSON for the whole slip.
+const MULTI_PART_NOTE = `
+
+MULTI-PART SLIP: the images above are consecutive pieces of ONE slip, in order from top to bottom, and each piece overlaps the next by a few lines. Read them as one document: return ONE JSON object covering every line item across all pieces, in slip order, and do NOT repeat a line that appears at the bottom of one piece and again at the top of the next. The supplier name and date are usually on the first piece and the grand total on the last.`
+
+// Output cut off at max_tokens: keep the complete line items. Returns the
+// parsed object, or null if nothing usable can be recovered.
+function salvageTruncatedJson(text) {
+  const start = text.indexOf('"line_items"')
+  if (start < 0) return null
+  const arr = text.indexOf('[', start)
+  if (arr < 0) return null
+  // Walk the array, collecting complete top-level objects.
+  const items = []
+  let depth = 0, objStart = -1, inStr = false, esc = false
+  for (let i = arr + 1; i < text.length; i++) {
+    const ch = text[i]
+    if (inStr) { if (esc) esc = false; else if (ch === '\\') esc = true; else if (ch === '"') inStr = false; continue }
+    if (ch === '"') { inStr = true; continue }
+    if (ch === '{') { if (depth === 0) objStart = i; depth++ }
+    else if (ch === '}') { depth--; if (depth === 0 && objStart >= 0) { try { items.push(JSON.parse(text.slice(objStart, i + 1))) } catch {} objStart = -1 } }
+    else if (ch === ']' && depth === 0) break
+  }
+  if (items.length === 0) return null
+  const head = text.slice(0, start)
+  const pick = (key) => { const m = head.match(new RegExp(`"${key}"\\s*:\\s*(null|true|false|-?[0-9.]+|"(?:[^"\\\\]|\\\\.)*")`)); if (!m) return null; try { return JSON.parse(m[1]) } catch { return null } }
+  return {
+    supplier_guess: pick('supplier_guess'),
+    date_guess: pick('date_guess'),
+    slip_total: pick('slip_total'),
+    amounts_include_vat_guess: pick('amounts_include_vat_guess'),
+    vat_rate_guess: pick('vat_rate_guess'),
+    zero_rated_marker: pick('zero_rated_marker'),
+    zero_rated_marker_source: pick('zero_rated_marker_source'),
+    line_items: items,
+  }
+}
+
 export default async function handler(req, res) {
   if (req.method !== 'POST') {
     res.status(405).json({ error: 'Method not allowed' })
@@ -64,15 +102,26 @@ export default async function handler(req, res) {
     return
   }
 
-  const { image_base64, media_type } = req.body || {}
-  if (!image_base64) {
+  // #500 (2026-09-27): a long till slip arrives as several overlapping
+  // tiles, top to bottom (see src/slipTiles.js). One image is still fine —
+  // `image_base64` is the old single-image shape and keeps working.
+  const body = req.body || {}
+  const images = Array.isArray(body.images) && body.images.length
+    ? body.images.filter((i) => i && i.data).map((i) => ({ media_type: i.media_type || 'image/jpeg', data: i.data }))
+    : body.image_base64 ? [{ media_type: body.media_type || 'image/jpeg', data: body.image_base64 }] : []
+  if (images.length === 0) {
     res.status(400).json({ error: 'No image provided.' })
+    return
+  }
+  if (images.length > 8) {
+    res.status(400).json({ error: 'Too many parts — a slip is sent as at most 8 pieces.' })
     return
   }
 
   // Guard against oversized payloads before spending an API call on them —
   // the client resizes images before upload, so this should rarely trigger.
-  if (image_base64.length > 6_000_000) {
+  const totalBytes = images.reduce((n, i) => n + i.data.length, 0)
+  if (totalBytes > 6_000_000) {
     res.status(400).json({ error: 'Image is too large — try a clearer, smaller photo.' })
     return
   }
@@ -87,20 +136,18 @@ export default async function handler(req, res) {
       },
       body: JSON.stringify({
         model: ANTHROPIC_MODEL,
-        max_tokens: 2048,
+        max_tokens: 8192,
         messages: [
           {
             role: 'user',
             content: [
-              {
-                type: 'image',
-                source: {
-                  type: 'base64',
-                  media_type: media_type || 'image/jpeg',
-                  data: image_base64,
-                },
-              },
-              { type: 'text', text: EXTRACTION_PROMPT },
+              ...images.flatMap((img, i) => [
+                ...(images.length > 1
+                  ? [{ type: 'text', text: `Part ${i + 1} of ${images.length} of the same slip, top to bottom.` }]
+                  : []),
+                { type: 'image', source: { type: 'base64', media_type: img.media_type, data: img.data } },
+              ]),
+              { type: 'text', text: images.length > 1 ? EXTRACTION_PROMPT + MULTI_PART_NOTE : EXTRACTION_PROMPT },
             ],
           },
         ],
@@ -121,16 +168,27 @@ export default async function handler(req, res) {
     const cleaned = rawText.trim().replace(/^```(?:json)?/i, '').replace(/```$/, '').trim()
 
     let parsed
+    let truncated = false
     try {
       parsed = JSON.parse(cleaned)
     } catch {
-      res.status(502).json({
-        error: 'Could not read that slip clearly. Try a clearer, well-lit photo, or enter the purchase manually.',
-      })
-      return
+      // A very long slip can outrun max_tokens; the JSON then stops mid-line.
+      // Keep every complete line item rather than throwing the whole read
+      // away, and tell the client so it can warn that the tail may be missing.
+      parsed = salvageTruncatedJson(cleaned)
+      truncated = !!parsed
+      if (!parsed) {
+        res.status(502).json({
+          error: 'Could not read that slip clearly. Try a clearer, well-lit photo, or enter the purchase manually.',
+        })
+        return
+      }
     }
+    if (data?.stop_reason === 'max_tokens') truncated = true
 
     if (!Array.isArray(parsed.line_items)) parsed.line_items = []
+    if (truncated) parsed.truncated = true
+    parsed.parts = images.length
 
     res.status(200).json(parsed)
   } catch (err) {

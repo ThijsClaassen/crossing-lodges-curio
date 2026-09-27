@@ -1,5 +1,6 @@
 import { useEffect, useMemo, useRef, useState, Fragment } from 'react'
 import { sb, LOCATIONS, currentPeriod } from './sb.js'
+import { prepareSlipImages } from './slipTiles.js'
 import { colors, fonts, css } from './theme.js'
 import BarcodeScanner from './BarcodeScanner.jsx'
 import { supabase } from './supabaseClient.js'
@@ -2762,15 +2763,17 @@ function SlipScanCard({ items, suppliers, location, onApproved, companyId, onSli
     setSaveStatus('')
     setScanning(true)
     try {
-      const resized = await resizeImageFile(file)
-      const base64 = await blobToBase64(resized)
+      // #500: a long till slip goes as overlapping tiles so the print stays
+      // readable; a normal photo is still one image. See src/slipTiles.js.
+      const { images, storeBlob: resized } = await prepareSlipImages(file)
       const res = await fetch('/api/parse-slip', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ image_base64: base64, media_type: 'image/jpeg' }),
+        body: JSON.stringify({ images }),
       })
       const data = await res.json()
       if (!res.ok) throw new Error(data.error || 'Could not read that slip.')
+      if (data.truncated) setScanError(`This slip is very long — ${(data.line_items || []).length} lines were read, but the last few may be missing. Check the bottom of the slip against the list below.`)
 
       const supplierMatch = data.supplier_guess
         ? findBestMatch(data.supplier_guess, suppliers, 'name')
