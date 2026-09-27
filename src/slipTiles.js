@@ -13,7 +13,7 @@
 
 export const LONG_EDGE_MAX = 1568   // what the vision API keeps without downscaling
 export const TILE_HEIGHT = 1400     // per tile, in scaled pixels
-export const TILE_OVERLAP = 140     // so a line cut at a tile edge is whole in the next one
+export const TILE_OVERLAP = 220     // ~4 till lines, so at least two whole lines repeat between tiles for stitching
 export const MAX_TILES = 8          // beyond this the request gets slow and large
 export const TARGET_WIDTH = 1100    // enough for till print; wider only costs bytes
 export const MIN_WIDTH = 700
@@ -219,4 +219,102 @@ function blobToBase64(blob) {
     reader.onerror = reject
     reader.readAsDataURL(blob)
   })
+}
+
+// ---------------------------------------------------------------------------
+// Reading the tiles. One request per tile, a few in parallel, stitched here.
+// Why not one request with every tile: eight images plus 8 000 tokens of JSON
+// ran past Vercel's function time limit ("FUNCTION_INVOCATION_TIMEOUT", seen
+// 2026-09-27). One image per call keeps every call short, and the parallel
+// calls finish in about the time of one.
+export async function readSlipParts(images, { endpoint = '/api/parse-slip', concurrency = 4 } = {}) {
+  const n = images.length
+  if (n === 0) throw new Error('No photo to read.')
+  const results = new Array(n)
+  let next = 0
+  const worker = async () => {
+    while (next < n) {
+      const i = next++
+      results[i] = await readOnePart(images[i], i + 1, n, endpoint)
+    }
+  }
+  await Promise.all(Array.from({ length: Math.min(concurrency, n) }, worker))
+  return mergeSlipParts(results)
+}
+
+// Each step names itself in its error, so a failure on a phone says WHERE
+// it happened rather than just what the browser felt like saying.
+async function readOnePart(image, part, parts, endpoint) {
+  const where = parts > 1 ? ` (part ${part} of ${parts})` : ''
+  const res = await fetch(endpoint, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ images: [image], part, parts }),
+  }).catch((e) => { throw new Error(`Sending the photo to the reader${where}: ${e.message}`) })
+  const text = await res.text().catch((e) => { throw new Error(`Reading the reply${where}: ${e.message}`) })
+  let data
+  try { data = JSON.parse(text) } catch { throw new Error(`The reader answered with something unexpected${where} (${res.status}): ${text.slice(0, 120)}`) }
+  if (!res.ok) throw new Error(`${data.error || 'Could not read that slip.'}${where}`)
+  return data
+}
+
+// Stitch the per-tile answers into one slip. Pure, tested.
+// Header fields come from the first part that has them, the grand total from
+// the last. Line items are joined with the overlap removed: the bottom lines
+// of one tile reappear at the top of the next (140 px, three or four lines).
+export function mergeSlipParts(parts) {
+  const list = (parts || []).filter(Boolean)
+  if (list.length === 0) return { line_items: [], parts: 0 }
+  const first = (k) => { for (const p of list) if (p[k] != null) return p[k]; return null }
+  const last = (k) => { for (let i = list.length - 1; i >= 0; i--) if (list[i][k] != null) return list[i][k]; return null }
+  let items = [...(list[0].line_items || [])]
+  for (let i = 1; i < list.length; i++) items = joinOverlap(items, list[i].line_items || [])
+  return {
+    supplier_guess: first('supplier_guess'),
+    date_guess: first('date_guess'),
+    slip_total: last('slip_total'),
+    amounts_include_vat_guess: first('amounts_include_vat_guess'),
+    vat_rate_guess: first('vat_rate_guess'),
+    zero_rated_marker: first('zero_rated_marker'),
+    zero_rated_marker_source: first('zero_rated_marker_source'),
+    line_items: items,
+    parts: list.length,
+    truncated: list.some((p) => p.truncated) || undefined,
+  }
+}
+
+const normText = (li) => String(li?.raw_text || '').toLowerCase().replace(/[^a-z0-9]+/g, ' ').trim()
+function sameLine(x, y, exact) {
+  const px = Number(x?.total_price), py = Number(y?.total_price)
+  if (Number.isFinite(px) && Number.isFinite(py) && Math.abs(px - py) > 0.005) return false
+  const tx = normText(x), ty = normText(y)
+  if (tx === ty) return tx.length > 0
+  if (exact) return false
+  // A line cut by the tile edge reads as a prefix of itself in the other tile.
+  return tx.length >= 4 && ty.length >= 4 && (tx.startsWith(ty) || ty.startsWith(tx))
+}
+
+const weakLine = (li) => { const p = Number(li?.total_price); return !(Number.isFinite(p) && p !== 0) || normText(li).length < 4 }
+
+// a = lines so far, b = the next tile's lines. Find the longest run at the end
+// of a (allowing up to 2 half-read lines after it) that matches a run at the
+// start of b (allowing up to 2 half-read lines before it); keep a's copy of
+// the run and b's copy of what follows. No match → plain concatenation.
+export function joinOverlap(a, b) {
+  const maxK = Math.min(a.length, b.length, 8)
+  for (let k = maxK; k >= 1; k--) {
+    for (let t = 0; t <= 2; t++) {
+      for (let s = 0; s <= 2; s++) {
+        const start = a.length - t - k
+        if (start < 0 || s + k > b.length) continue
+        // A one-line match is weak evidence: only allow it to skip neighbours
+        // that look half-read (no price, or a stub of text), never real lines.
+        if (k === 1 && (!a.slice(start + 1).every(weakLine) || !b.slice(0, s).every(weakLine))) continue
+        let ok = true
+        for (let j = 0; j < k && ok; j++) ok = sameLine(a[start + j], b[s + j], k === 1)
+        if (ok) return a.slice(0, start + k).concat(b.slice(s + k))
+      }
+    }
+  }
+  return a.concat(b)
 }

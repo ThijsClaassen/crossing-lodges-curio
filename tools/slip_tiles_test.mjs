@@ -11,7 +11,7 @@
 import { readFileSync } from 'node:fs'
 import { fileURLToPath } from 'node:url'
 import { dirname, join } from 'node:path'
-import { planTiles, findBrightBand, LONG_EDGE_MAX, MAX_TILES, MIN_WIDTH, TILE_OVERLAP } from '../src/slipTiles.js'
+import { planTiles, findBrightBand, mergeSlipParts, joinOverlap, LONG_EDGE_MAX, MAX_TILES, MIN_WIDTH, TILE_OVERLAP } from '../src/slipTiles.js'
 
 const here = dirname(fileURLToPath(import.meta.url))
 let failed = 0
@@ -59,7 +59,7 @@ check('API output budget raised and truncation flagged', /max_tokens: 8192/.test
 check('API caps parts and total size', /images\.length > 8/.test(api) && /totalBytes > 6_000_000/.test(api))
 check('API function may run 60 s', /maxDuration: 60/.test(api))
 const app = readFileSync(join(here, '..', 'src', 'App.jsx'), 'utf8')
-check('scan flow uses prepareSlipImages and posts images[]', /prepareSlipImages\(file\)/.test(app) && /JSON\.stringify\(\{\s*images\s*\}\)/.test(app))
+check('scan flow uses prepareSlipImages', /prepareSlipImages\(file\)/.test(app))
 check('scan flow warns when the tail may be missing', /(data|ocr)\.truncated/.test(app))
 
 // --- findBrightBand: where is the slip in a normal portrait photo? -----------
@@ -72,7 +72,30 @@ check('slip that fills the frame: no crop', findBrightBand(Array.from({ length: 
 check('a bright reflection narrower than the slip is ignored for the wider band', (() => { const v = Array.from({ length: 160 }, (_, i) => (i >= 20 && i < 25 ? 250 : i >= 60 && i < 120 ? 225 : 50)); const b = findBrightBand(v); return b && b[0] >= 55 && b[1] <= 125 })())
 check('glare stripes across the slip do not split it when they are bright too', (() => { const v = Array.from({ length: 160 }, (_, i) => (i >= 50 && i < 110 ? (i % 10 === 0 ? 255 : 225) : 60)); const b = findBrightBand(v); return b && b[1] - b[0] >= 60 })())
 check('prepareSlipImages crops to the slip before tiling', /const rect = findSlipRect\(bitmap\)/.test(readFileSync(join(here, '..', 'src', 'slipTiles.js'), 'utf8')) && /planTiles\(rect\.w, rect\.h\)/.test(readFileSync(join(here, '..', 'src', 'slipTiles.js'), 'utf8')))
-check('every step names itself in its error', /Opening the photo/.test(readFileSync(join(here, '..', 'src', 'slipTiles.js'), 'utf8')) && /Sending the photo to the reader/.test(app) && /The reader answered with something unexpected/.test(app))
+const tilesSrc = readFileSync(join(here, '..', 'src', 'slipTiles.js'), 'utf8')
+check('every step names itself in its error', /Opening the photo/.test(tilesSrc) && /Sending the photo to the reader\$\{where\}/.test(tilesSrc) && /The reader answered with something unexpected/.test(tilesSrc))
+
+// --- one request per tile, stitched on the client (FUNCTION_INVOCATION_TIMEOUT, 2026-09-27)
+check('scan flow reads the tiles through readSlipParts', /readSlipParts\(images\)/.test(app) && /readSlipParts/.test(app.split('\n').find((l) => /slipTiles\.js/.test(l) && /import/.test(l)) || ''))
+check('client sends one image per request with part/parts', /body: JSON\.stringify\(\{ images: \[image\], part, parts \}\)/.test(tilesSrc))
+check('API tells the model when an image is one piece of a longer slip', /fragmentNote\(part, parts\)/.test(api) && /PART OF A LONGER SLIP/.test(api) && /report null for anything not visible in this piece/.test(api))
+check('API echoes part and parts', /parsed\.part = part/.test(api))
+const L = (t, p) => ({ raw_text: t, qty: 1, unit_price: null, total_price: p })
+const A = [L('MILK 2L', 32.99), L('BREAD WHITE', 18.5), L('EGGS 18', 54), L('BUTTER 5', 0)]
+const B = [L('EGGS 18', 54), L('BUTTER 500G', 62), L('CHEESE GOUDA', 89)]
+check('overlap lines are not doubled; a half-read line at the tile edge is dropped', joinOverlap(A, B).map((x) => x.raw_text).join('|') === 'MILK 2L|BREAD WHITE|EGGS 18|BUTTER 500G|CHEESE GOUDA', joinOverlap(A, B).map((x) => x.raw_text).join('|'))
+check('a garbled first line at the top of the next tile is skipped', joinOverlap([L('MILK', 32.99), L('BREAD', 18.5), L('EGGS', 54)], [L('EG', 0), L('BREAD', 18.5), L('EGGS', 54), L('CHEESE', 89)]).map((x) => x.raw_text).join('|') === 'MILK|BREAD|EGGS|CHEESE')
+check('no overlap → plain join', joinOverlap([L('A', 1), L('B', 2)], [L('C', 3), L('D', 4)]).length === 4)
+check('same text, different price is a different line', joinOverlap([L('COKE 2L', 24.99)], [L('COKE 2L', 22.99)]).length === 2)
+check('a repeated identical item is only merged when it sits on the tile edge', joinOverlap([L('COKE 2L', 24.99), L('CHIPS', 12)], [L('COKE 2L', 24.99)]).length === 3)
+const merged = mergeSlipParts([
+  { supplier_guess: 'SPAR', date_guess: '2026-09-20', slip_total: null, amounts_include_vat_guess: true, vat_rate_guess: 15, zero_rated_marker: '#', zero_rated_marker_source: 'legend', line_items: A },
+  { supplier_guess: null, date_guess: null, slip_total: null, amounts_include_vat_guess: null, line_items: B },
+  { supplier_guess: null, slip_total: 257.49, line_items: [L('CHEESE GOUDA', 89), L('TEA', 45)], truncated: true },
+])
+check('merge: header from the first part, total from the last, lines stitched, truncated carried', merged.supplier_guess === 'SPAR' && merged.date_guess === '2026-09-20' && merged.slip_total === 257.49 && merged.vat_rate_guess === 15 && merged.zero_rated_marker === '#' && merged.line_items.length === 6 && merged.parts === 3 && merged.truncated === true, JSON.stringify(merged.line_items.map((x) => x.raw_text)))
+check('merge of one part is that part', mergeSlipParts([{ supplier_guess: 'X', line_items: A }]).line_items.length === 4)
+check('merge of nothing is empty, not a crash', mergeSlipParts([]).line_items.length === 0 && mergeSlipParts(null).line_items.length === 0)
 
 console.log(failed ? `\n${failed} check(s) failed` : '\nall slip tile checks pass')
 process.exit(failed ? 1 : 0)

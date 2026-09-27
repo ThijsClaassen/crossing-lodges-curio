@@ -55,6 +55,13 @@ const MULTI_PART_NOTE = `
 
 MULTI-PART SLIP: the images above are consecutive pieces of ONE slip, in order from top to bottom, and each piece overlaps the next by a few lines. Read them as one document: return ONE JSON object covering every line item across all pieces, in slip order, and do NOT repeat a line that appears at the bottom of one piece and again at the top of the next. The supplier name and date are usually on the first piece and the grand total on the last.`
 
+// One piece of a long slip, read on its own (the client sends each tile as
+// its own request, in parallel, and stitches the answers — one request with
+// all the tiles ran past the serverless time limit).
+const fragmentNote = (part, parts) => `
+
+PART OF A LONGER SLIP: this image is piece ${part} of ${parts} of ONE till slip, cut top to bottom with a few lines of overlap between pieces. Read every line item visible in THIS piece, in order. A line cut off at the very top or bottom edge: include it if it is legible, skip it if it is not. The supplier name and date are usually only on piece 1 and the grand total only on the last piece — report null for anything not visible in this piece; do not guess it.`
+
 // Output cut off at max_tokens: keep the complete line items. Returns the
 // parsed object, or null if nothing usable can be recovered.
 function salvageTruncatedJson(text) {
@@ -106,6 +113,8 @@ export default async function handler(req, res) {
   // tiles, top to bottom (see src/slipTiles.js). One image is still fine —
   // `image_base64` is the old single-image shape and keeps working.
   const body = req.body || {}
+  const part = Math.max(1, Number(body.part) || 1)
+  const parts = Math.max(part, Number(body.parts) || 1)
   const images = Array.isArray(body.images) && body.images.length
     ? body.images.filter((i) => i && i.data).map((i) => ({ media_type: i.media_type || 'image/jpeg', data: i.data }))
     : body.image_base64 ? [{ media_type: body.media_type || 'image/jpeg', data: body.image_base64 }] : []
@@ -147,7 +156,7 @@ export default async function handler(req, res) {
                   : []),
                 { type: 'image', source: { type: 'base64', media_type: img.media_type, data: img.data } },
               ]),
-              { type: 'text', text: images.length > 1 ? EXTRACTION_PROMPT + MULTI_PART_NOTE : EXTRACTION_PROMPT },
+              { type: 'text', text: images.length > 1 ? EXTRACTION_PROMPT + MULTI_PART_NOTE : parts > 1 ? EXTRACTION_PROMPT + fragmentNote(part, parts) : EXTRACTION_PROMPT },
             ],
           },
         ],
@@ -188,7 +197,8 @@ export default async function handler(req, res) {
 
     if (!Array.isArray(parsed.line_items)) parsed.line_items = []
     if (truncated) parsed.truncated = true
-    parsed.parts = images.length
+    parsed.parts = images.length > 1 ? images.length : parts
+    parsed.part = part
 
     res.status(200).json(parsed)
   } catch (err) {

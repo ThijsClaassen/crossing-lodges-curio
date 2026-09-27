@@ -1,6 +1,6 @@
 import { useEffect, useMemo, useRef, useState, Fragment } from 'react'
 import { sb, LOCATIONS, currentPeriod } from './sb.js'
-import { prepareSlipImages } from './slipTiles.js'
+import { prepareSlipImages, readSlipParts } from './slipTiles.js'
 import { colors, fonts, css } from './theme.js'
 import BarcodeScanner from './BarcodeScanner.jsx'
 import { supabase } from './supabaseClient.js'
@@ -2766,17 +2766,9 @@ function SlipScanCard({ items, suppliers, location, onApproved, companyId, onSli
       // #500: a long till slip goes as overlapping tiles so the print stays
       // readable; a normal photo is still one image. See src/slipTiles.js.
       const { images, storeBlob: resized } = await prepareSlipImages(file)
-      // Each step names itself in its error, so a failure on a phone says
-      // WHERE it happened rather than just what the browser felt like saying.
-      const res = await fetch('/api/parse-slip', {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ images }),
-      }).catch((e) => { throw new Error(`Sending the photo to the reader: ${e.message}`) })
-      const text = await res.text().catch((e) => { throw new Error(`Reading the reply: ${e.message}`) })
-      let data
-      try { data = JSON.parse(text) } catch { throw new Error(`The reader answered with something unexpected (${res.status}): ${text.slice(0, 120)}`) }
-      if (!res.ok) throw new Error(data.error || 'Could not read that slip.')
+      // One short request per tile, in parallel, stitched in slipTiles.js —
+      // one request with every tile ran past the serverless time limit.
+      const data = await readSlipParts(images)
       if (data.truncated) setScanError(`This slip is very long — ${(data.line_items || []).length} lines were read, but the last few may be missing. Check the bottom of the slip against the list below.`)
 
       const supplierMatch = data.supplier_guess
