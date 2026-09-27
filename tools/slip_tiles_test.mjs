@@ -11,7 +11,7 @@
 import { readFileSync } from 'node:fs'
 import { fileURLToPath } from 'node:url'
 import { dirname, join } from 'node:path'
-import { planTiles, LONG_EDGE_MAX, MAX_TILES, MIN_WIDTH, TILE_OVERLAP } from '../src/slipTiles.js'
+import { planTiles, findBrightBand, LONG_EDGE_MAX, MAX_TILES, MIN_WIDTH, TILE_OVERLAP } from '../src/slipTiles.js'
 
 const here = dirname(fileURLToPath(import.meta.url))
 let failed = 0
@@ -61,6 +61,18 @@ check('API function may run 60 s', /maxDuration: 60/.test(api))
 const app = readFileSync(join(here, '..', 'src', 'App.jsx'), 'utf8')
 check('scan flow uses prepareSlipImages and posts images[]', /prepareSlipImages\(file\)/.test(app) && /JSON\.stringify\(\{\s*images\s*\}\)/.test(app))
 check('scan flow warns when the tail may be missing', /(data|ocr)\.truncated/.test(app))
+
+// --- findBrightBand: where is the slip in a normal portrait photo? -----------
+// 160 columns: dark counter, a white slip from column 55 to 105, dark counter.
+const cols = Array.from({ length: 160 }, (_, i) => (i >= 55 && i < 105 ? 235 : 70 + (i % 7)))
+const band = findBrightBand(cols)
+check('finds the bright slip strip on a dark counter (with a small margin)', band && band[0] <= 55 && band[0] >= 50 && band[1] >= 105 && band[1] <= 110, JSON.stringify(band))
+check('slip on a white table: no crop (nothing distinct)', findBrightBand(Array.from({ length: 160 }, () => 240)) === null)
+check('slip that fills the frame: no crop', findBrightBand(Array.from({ length: 160 }, (_, i) => (i > 3 && i < 156 ? 230 : 60))) === null)
+check('a bright reflection narrower than the slip is ignored for the wider band', (() => { const v = Array.from({ length: 160 }, (_, i) => (i >= 20 && i < 25 ? 250 : i >= 60 && i < 120 ? 225 : 50)); const b = findBrightBand(v); return b && b[0] >= 55 && b[1] <= 125 })())
+check('glare stripes across the slip do not split it when they are bright too', (() => { const v = Array.from({ length: 160 }, (_, i) => (i >= 50 && i < 110 ? (i % 10 === 0 ? 255 : 225) : 60)); const b = findBrightBand(v); return b && b[1] - b[0] >= 60 })())
+check('prepareSlipImages crops to the slip before tiling', /const rect = findSlipRect\(bitmap\)/.test(readFileSync(join(here, '..', 'src', 'slipTiles.js'), 'utf8')) && /planTiles\(rect\.w, rect\.h\)/.test(readFileSync(join(here, '..', 'src', 'slipTiles.js'), 'utf8')))
+check('every step names itself in its error', /Opening the photo/.test(readFileSync(join(here, '..', 'src', 'slipTiles.js'), 'utf8')) && /Sending the photo to the reader/.test(app) && /The reader answered with something unexpected/.test(app))
 
 console.log(failed ? `\n${failed} check(s) failed` : '\nall slip tile checks pass')
 process.exit(failed ? 1 : 0)
