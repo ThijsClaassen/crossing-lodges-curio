@@ -1,0 +1,7 @@
+{
+  "functions": {
+    "api/parse-slip.js": {
+      "maxDuration": 60
+    }
+  }
+}

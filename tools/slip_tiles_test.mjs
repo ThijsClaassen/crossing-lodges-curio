@@ -11,7 +11,7 @@
 import { readFileSync } from 'node:fs'
 import { fileURLToPath } from 'node:url'
 import { dirname, join } from 'node:path'
-import { planTiles, findBrightBand, mergeSlipParts, joinOverlap, LONG_EDGE_MAX, MAX_TILES, MIN_WIDTH, TILE_OVERLAP } from '../src/slipTiles.js'
+import { planTiles, findBrightBand, mergeSlipParts, joinOverlap, LONG_EDGE_MAX, MAX_TILES, MIN_WIDTH, TILE_OVERLAP, TILE_HEIGHT } from '../src/slipTiles.js'
 
 const here = dirname(fileURLToPath(import.meta.url))
 let failed = 0
@@ -96,6 +96,16 @@ const merged = mergeSlipParts([
 check('merge: header from the first part, total from the last, lines stitched, truncated carried', merged.supplier_guess === 'SPAR' && merged.date_guess === '2026-09-20' && merged.slip_total === 257.49 && merged.vat_rate_guess === 15 && merged.zero_rated_marker === '#' && merged.line_items.length === 6 && merged.parts === 3 && merged.truncated === true, JSON.stringify(merged.line_items.map((x) => x.raw_text)))
 check('merge of one part is that part', mergeSlipParts([{ supplier_guess: 'X', line_items: A }]).line_items.length === 4)
 check('merge of nothing is empty, not a crash', mergeSlipParts([]).line_items.length === 0 && mergeSlipParts(null).line_items.length === 0)
+
+// --- a piece that runs out of time is split and retried (second FUNCTION_INVOCATION_TIMEOUT, 2026-09-27)
+check('vercel.json pins the function timeout (the in-file export alone may be ignored)', (() => { try { const v = JSON.parse(readFileSync(join(here, '..', 'vercel.json'), 'utf8')); return v.functions['api/parse-slip.js'].maxDuration >= 60 } catch { return false } })())
+check('API gives up before the platform does and says so cleanly', /new AbortController\(\)/.test(api) && /signal: deadline\.signal/.test(api) && /timed_out: true/.test(api) && /DEADLINE_MS/.test(api) && /clearTimeout\(timer\)/.test(api))
+check('API logs how long each piece took', /parsed\.ms = Date\.now\(\) - t0/.test(api))
+check('client treats a platform 504 as ran-out-of-time, not a hard error', /res\.status === 504 \|\| \/FUNCTION_INVOCATION_TIMEOUT\/\.test\(text\)/.test(tilesSrc))
+check('client splits a timed-out piece in two and retries, at most twice', /readPartWithRetry\(im, part, parts, endpoint, depth \+ 1\)/.test(tilesSrc) && /depth < 2/.test(tilesSrc) && /async function splitTile/.test(tilesSrc))
+check('tiles are small enough that one call has little to write', TILE_HEIGHT <= 1000 && MAX_TILES >= 12)
+const longSlip2 = planTiles(3000, 12000)
+check('a 60 cm slip is still at most MAX_TILES pieces with the smaller tiles', longSlip2.tiles.length <= MAX_TILES && longSlip2.tiles.length >= 4, String(longSlip2.tiles.length))
 
 console.log(failed ? `\n${failed} check(s) failed` : '\nall slip tile checks pass')
 process.exit(failed ? 1 : 0)

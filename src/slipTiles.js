@@ -12,9 +12,9 @@
 // the canvas work is in prepareSlipImages() below.
 
 export const LONG_EDGE_MAX = 1568   // what the vision API keeps without downscaling
-export const TILE_HEIGHT = 1400     // per tile, in scaled pixels
+export const TILE_HEIGHT = 1000     // per tile, in scaled pixels — ~25 till lines, so one call has little to write
 export const TILE_OVERLAP = 220     // ~4 till lines, so at least two whole lines repeat between tiles for stitching
-export const MAX_TILES = 8          // beyond this the request gets slow and large
+export const MAX_TILES = 12         // pieces are read in parallel, so more small ones beat fewer big ones
 export const TARGET_WIDTH = 1100    // enough for till print; wider only costs bytes
 export const MIN_WIDTH = 700
 
@@ -227,7 +227,7 @@ function blobToBase64(blob) {
 // ran past Vercel's function time limit ("FUNCTION_INVOCATION_TIMEOUT", seen
 // 2026-09-27). One image per call keeps every call short, and the parallel
 // calls finish in about the time of one.
-export async function readSlipParts(images, { endpoint = '/api/parse-slip', concurrency = 4 } = {}) {
+export async function readSlipParts(images, { endpoint = '/api/parse-slip', concurrency = 6 } = {}) {
   const n = images.length
   if (n === 0) throw new Error('No photo to read.')
   const results = new Array(n)
@@ -235,11 +235,47 @@ export async function readSlipParts(images, { endpoint = '/api/parse-slip', conc
   const worker = async () => {
     while (next < n) {
       const i = next++
-      results[i] = await readOnePart(images[i], i + 1, n, endpoint)
+      results[i] = await readPartWithRetry(images[i], i + 1, n, endpoint)
     }
   }
   await Promise.all(Array.from({ length: Math.min(concurrency, n) }, worker))
   return mergeSlipParts(results)
+}
+
+// A piece the reader could not finish in time is cut in two and each half
+// read on its own (half the lines, half the writing). Once more if needed.
+async function readPartWithRetry(image, part, parts, endpoint, depth = 0) {
+  const r = await readOnePart(image, part, parts, endpoint)
+  if (!r.timed_out) return r
+  const halves = depth < 2 ? await splitTile(image).catch(() => null) : null
+  if (!halves) throw new Error(`The reader ran out of time on part ${part} of ${parts}, even on a small piece. Try again in a moment, or photograph the slip in two halves.`)
+  const [a, b] = await Promise.all(halves.map((im) => readPartWithRetry(im, part, parts, endpoint, depth + 1)))
+  return mergeSlipParts([a, b])
+}
+
+// Cut a tile (base64 JPEG) into two overlapping halves.
+async function splitTile(image) {
+  const img = await new Promise((resolve, reject) => {
+    const el = new Image()
+    el.onload = () => resolve(el)
+    el.onerror = () => reject(new Error('decode'))
+    el.src = `data:${image.media_type || 'image/jpeg'};base64,${image.data}`
+  })
+  const w = img.naturalWidth, h = img.naturalHeight
+  if (!w || h < 400) return null
+  const half = Math.min(h, Math.ceil((h + TILE_OVERLAP) / 2))
+  const canvas = document.createElement('canvas')
+  const ctx = canvas.getContext('2d')
+  const out = []
+  for (const y of [0, h - half]) {
+    canvas.width = w
+    canvas.height = half
+    ctx.fillStyle = '#fff'
+    ctx.fillRect(0, 0, w, half)
+    ctx.drawImage(img, 0, y, w, half, 0, 0, w, half)
+    out.push({ media_type: 'image/jpeg', data: await canvasToBase64(canvas, 0.85) })
+  }
+  return out
 }
 
 // Each step names itself in its error, so a failure on a phone says WHERE
@@ -252,6 +288,9 @@ async function readOnePart(image, part, parts, endpoint) {
     body: JSON.stringify({ images: [image], part, parts }),
   }).catch((e) => { throw new Error(`Sending the photo to the reader${where}: ${e.message}`) })
   const text = await res.text().catch((e) => { throw new Error(`Reading the reply${where}: ${e.message}`) })
+  // The platform killing the function (504, no JSON) counts as "ran out of
+  // time" too — the caller splits the piece and retries.
+  if (res.status === 504 || /FUNCTION_INVOCATION_TIMEOUT/.test(text)) return { line_items: [], timed_out: true }
   let data
   try { data = JSON.parse(text) } catch { throw new Error(`The reader answered with something unexpected${where} (${res.status}): ${text.slice(0, 120)}`) }
   if (!res.ok) throw new Error(`${data.error || 'Could not read that slip.'}${where}`)
