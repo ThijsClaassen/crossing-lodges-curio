@@ -21,7 +21,10 @@ export const config = {
   maxDuration: 60, // seconds — a long till slip is several images and a few thousand output tokens (#500)
 }
 
-const ANTHROPIC_MODEL = process.env.ANTHROPIC_MODEL || 'claude-sonnet-5'
+// Haiku by default (2026-09-28): a till slip is a reading job, not a reasoning
+// one, and Haiku finishes a piece in a few seconds where Sonnet ran past the
+// function time limit. ANTHROPIC_MODEL in Vercel still overrides.
+const ANTHROPIC_MODEL = process.env.ANTHROPIC_MODEL || 'claude-haiku-4-5'
 // Give up a little before the platform does (maxDuration 60 s here and in vercel.json).
 const DEADLINE_MS = Number(process.env.SLIP_DEADLINE_MS) || 48_000
 

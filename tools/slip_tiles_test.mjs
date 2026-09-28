@@ -107,5 +107,7 @@ check('tiles are small enough that one call has little to write', TILE_HEIGHT <=
 const longSlip2 = planTiles(3000, 12000)
 check('a 60 cm slip is still at most MAX_TILES pieces with the smaller tiles', longSlip2.tiles.length <= MAX_TILES && longSlip2.tiles.length >= 4, String(longSlip2.tiles.length))
 
+check('scanner defaults to Haiku (env ANTHROPIC_MODEL overrides)', /process\.env\.ANTHROPIC_MODEL \|\| 'claude-haiku-4-5'/.test(api))
+
 console.log(failed ? `\n${failed} check(s) failed` : '\nall slip tile checks pass')
 process.exit(failed ? 1 : 0)
