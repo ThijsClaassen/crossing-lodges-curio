@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useRef, useState, Fragment } from 'react'
+import { useEffect, useMemo, useRef, useState, Fragment, useLayoutEffect } from 'react'
 import { sb, LOCATIONS, currentPeriod } from './sb.js'
 import { prepareSlipImages, readSlipParts } from './slipTiles.js'
 import { colors, fonts, css } from './theme.js'
@@ -2071,12 +2071,37 @@ function Drawer({ title, meta, tabs, tab, onTab, onClose, footer, children }) {
   useEffect(() => {
     const onKey = (e) => { if (e.key === 'Escape') onClose() }
     window.addEventListener('keydown', onKey)
-    return () => window.removeEventListener('keydown', onKey)
+    // Fit the content (2026-09-28, Thijs: "if not all information fits, I
+  // want the drawer to be bigger, so all info fits in one screen"). The
+  // body is measured after every render; if anything would need a sideways
+  // scroll — a wide table, mostly — the drawer grows by exactly that much,
+  // up to the screen minus the sidebar. It only grows while open, so tabs
+  // don't jump; paragraphs wrap, so they never widen it.
+  const bodyRef = useRef(null)
+  const [fitWidth, setFitWidth] = useState(null)
+  useLayoutEffect(() => {
+    const el = bodyRef.current
+    if (!el || typeof ResizeObserver === 'undefined') return
+    const measure = () => {
+      if (window.innerWidth <= 768) return   // a tablet/phone drawer is already full width
+      const overflow = el.scrollWidth - el.clientWidth
+      if (overflow <= 1) return
+      const cap = Math.max(640, window.innerWidth - 250)
+      setFitWidth((w) => Math.min(cap, Math.ceil((w || el.parentElement.getBoundingClientRect().width) + overflow + 2)))
+    }
+    measure()
+    const ro = new ResizeObserver(measure)
+    ro.observe(el)
+    const mo = new MutationObserver(measure)
+    mo.observe(el, { childList: true, subtree: true, attributes: true })
+    return () => { ro.disconnect(); mo.disconnect() }
+  }, [tab])
+  return () => window.removeEventListener('keydown', onKey)
   }, [onClose])
   return (
     <>
       <div className="drawer-scrim" onClick={onClose} />
-      <aside className="drawer" role="dialog" aria-label={typeof title === 'string' ? title : undefined}>
+      <aside className="drawer" role="dialog" aria-label={typeof title === 'string' ? title : undefined} style={fitWidth ? { width: fitWidth } : undefined}>
         <div className="drawer-head">
           <div className="drawer-title">
             <div><h2>{title}</h2>{meta && <div className="drawer-meta">{meta}</div>}</div>
@@ -2092,7 +2117,7 @@ function Drawer({ title, meta, tabs, tab, onTab, onClose, footer, children }) {
             </div>
           )}
         </div>
-        <div className="drawer-body">{children}</div>
+        <div className="drawer-body" ref={bodyRef}>{children}</div>
         {footer && <div className="drawer-foot">{footer}</div>}
       </aside>
     </>

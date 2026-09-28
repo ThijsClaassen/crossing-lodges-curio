@@ -15,6 +15,7 @@ import { parse } from '@babel/parser'
 
 const here = dirname(fileURLToPath(import.meta.url))
 const APP = readFileSync(join(here, '..', 'src', 'App.jsx'), 'utf8')
+
 const VARIANT = APP.match(/variant="(food|bev|curio)"/)?.[1]
 const CSS = (() => { try { return readFileSync(join(here, '..', 'src', 'app.css'), 'utf8') } catch { return readFileSync(join(here, '..', 'src', 'theme.js'), 'utf8') } })()
 
@@ -71,6 +72,16 @@ if (VARIANT === 'food') {
 const retIdx = d.indexOf('return (\n    <Drawer')
 const lastHook = Math.max(d.lastIndexOf('useState('), d.lastIndexOf('useEffect('), d.lastIndexOf('useMemo('))
 check('ItemDrawer has no hook after its return', lastHook < retIdx)
+
+// The drawer grows to fit its content instead of scrolling sideways (2026-09-28).
+{
+  const drawerSrc = APP
+  const fit = drawerSrc.slice(drawerSrc.indexOf('function Drawer('), drawerSrc.indexOf('function Drawer(') + 4000)
+  const okFit = /const overflow = el\.scrollWidth - el\.clientWidth/.test(fit) && /setFitWidth\(/.test(fit) && /window\.innerWidth - 250/.test(fit) && /new ResizeObserver\(measure\)/.test(fit) && /style=\{fitWidth \? \{ width: fitWidth \} : undefined\}/.test(fit) && /className="drawer-body" ref=\{bodyRef\}/.test(fit)
+  const okMobile = /window\.innerWidth <= 768\) return/.test(fit)
+  check('drawer widens itself when its content would scroll sideways (capped at screen minus sidebar)', okFit)
+  check('drawer never grows past a phone or tablet screen', okMobile)
+}
 
 console.log(failed ? `\n${failed} check(s) failed` : `\nall item drawer checks pass (${VARIANT})`)
 process.exit(failed ? 1 : 0)
