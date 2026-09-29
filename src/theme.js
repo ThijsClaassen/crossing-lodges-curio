@@ -479,6 +479,7 @@ td .sub2{display:block;color:var(--text-muted);font-size:11.5px;margin-top:2px;f
 .toolbar input{flex:1;min-width:180px;max-width:320px}
 .page-head{display:flex;align-items:flex-start;gap:12px;flex-wrap:wrap;margin-bottom:10px}
 .page-head .actions{margin-left:auto;display:flex;gap:8px}
+.why{display:inline-block;margin-left:6px;width:16px;height:16px;border-radius:50%;border:1px solid var(--line);font-size:10px;text-align:center;line-height:15px;color:var(--text-muted);cursor:help;vertical-align:middle;font-weight:400}
 .lvl{display:inline-flex;align-items:center;gap:8px}
 .lvl .bar{width:70px;height:6px;background:var(--surface-overlay);border-radius:999px;overflow:hidden;display:inline-block}
 .lvl .bar i{display:block;height:100%;background:var(--success)}
