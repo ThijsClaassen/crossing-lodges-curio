@@ -54,8 +54,26 @@ check('noCompanyText names the company and the app', /^Limpopo Lipadi doesn't us
 check('noCompanyText: suspended says paused and that nothing is deleted', /paused/.test(S.noCompanyText({ kind: 'suspended' }, 'Ops')) && /Nothing has been deleted/.test(S.noCompanyText({ kind: 'suspended' }, 'Ops')))
 check('noCompanyText: the old message otherwise', /isn't linked to any company yet/.test(S.noCompanyText(null, 'Ops')))
 
+// Needs (#561): a module whose source is off counts as off.
+const noPms = S.makeSwitches([row('finance', 'pms', false)], null)
+check('needs: Sales & Marketing, Reservations, Guest economics go with the PMS link', !noPms.moduleOn('finance', 'marketing') && !noPms.moduleOn('finance', 'reservations') && !noPms.moduleOn('finance', 'guesteco') && noPms.moduleOn('finance', 'budget'))
+check('needs: Payroll goes when HR is off, or HR › Contracts', !S.makeSwitches([row('hr_linen', '', false)], null).moduleOn('finance', 'payroll') && !S.makeSwitches([row('hr_linen', 'contracts', false)], null).moduleOn('finance', 'payroll') && S.makeSwitches([row('hr_linen', 'loans', false)], null).moduleOn('finance', 'payroll'))
+check('needs: MTB goes with Maintenance › Stock', !S.makeSwitches([row('maintenance', 'stock', false)], null).moduleOn('maintenance', 'mtb'))
+check('needs: Bill to a member goes with Finance › Members (and its old column)', !S.makeSwitches([], { member_billing_enabled: false }).moduleOn('food_stock', 'billmember') && S.makeSwitches([], { member_billing_enabled: true }).moduleOn('maintenance', 'billmember') && !S.makeSwitches([row('finance', '', false)], { member_billing_enabled: true }).moduleOn('curio', 'billmember'))
+check('needs: a module\'s own switch still counts', !S.makeSwitches([row('maintenance', 'mtb', false)], null).moduleOn('maintenance', 'mtb'))
+check('needs: every need points at a real app', Object.values(S.NEEDS).flat().every(([a]) => ['finance', 'food_stock', 'beverage', 'curio', 'hr_linen', 'ops', 'maintenance'].includes(a)))
+
+// Live P&L lines (#561): filled from an app while its module is on, bank-allocated otherwise.
+const liveAll = S.liveCategories(S.ALL_ON.moduleOn)
+check('live: all on = revenue, fuel, parts, repairs, COGS beverage, the three Yoco income lines', ['revenue', 'fuel', 'parts', 'repairs', 'cogs_beverage', 'income_curio_shop', 'income_massages', 'income_premium_food_and_beverages'].every((c) => liveAll.has(c)) && liveAll.size === 8)
+check('live: Marketing is an ordinary bank-allocated line now', !liveAll.has('marketing'))
+const liveNoOps = S.liveCategories(S.makeSwitches([row('ops', '', false)], null).moduleOn)
+check('live: Ops off → fuel, parts, repairs fall back to the bank', !liveNoOps.has('fuel') && !liveNoOps.has('parts') && !liveNoOps.has('repairs') && liveNoOps.has('revenue'))
+check('live: Ops › Diesel & petrol off → only fuel falls back', (() => { const l = S.liveCategories(S.makeSwitches([row('ops', 'fuel', false)], null).moduleOn); return !l.has('fuel') && l.has('parts') })())
+check('live: no PMS → revenue from the bank; no Beverage → COGS beverage; no Yoco → the three income lines', !S.liveCategories(noPms.moduleOn).has('revenue') && !S.liveCategories(S.makeSwitches([row('beverage', '', false)], null).moduleOn).has('cogs_beverage') && !S.liveCategories(S.makeSwitches([row('finance', 'yoco', false)], null).moduleOn).has('income_massages'))
+
 // Same file in all seven apps: pinned by its hash (update all seven together).
-const HASH = '5961a383b6b3260f6dd5967234179f52'
+const HASH = 'fe922c98eda2c3aec6ea6cfb4d8d1c7d'
 const hash = createHash('md5').update(readFileSync(join(ROOT, 'src', 'companySwitches.js'))).digest('hex')
 check('companySwitches.js is the shared version', hash === HASH, hash)
 
@@ -157,11 +175,37 @@ if (APP === 'finance') {
   check('Reports: Budget variance behind Budgets, Staff cost behind Payroll', /moduleOn\('budget'\) && \{ key: 'variance'/.test(rep) && /canSeeStaffCost\(profile\) && moduleOn\('payroll'\)/.test(rep))
   const set = read('SettingsTabs.jsx')
   check('Settings: PMS Sync behind PMS, Source groups behind Sales & Marketing', /const showSemper = moduleOn\('pms'\)/.test(set) && /const showSourceGroups = moduleOn\('marketing'\)/.test(set) && /subTab === 'semper' && showSemper/.test(set))
-  check('Settings: Yoco card machines while Finance or any stock app\'s Yoco is on', /const showYoco = appOn\('finance'\) \|\| isOn\('food_stock', 'yoco'\)/.test(set) && /subTab === 'yoco' && showYoco/.test(set))
+  check('Settings: Yoco card machines while Finance › Yoco sales or any stock app\'s Yoco is on', /const showYoco = isOn\('finance', 'yoco'\) \|\| isOn\('food_stock', 'yoco'\)/.test(set) && /subTab === 'yoco' && showYoco/.test(set))
   const mo = read('ManagerOverview.jsx')
   check('Overview: blocks and launcher only for apps the company has', /\(appAccessKeys \|\| \[\]\)\.includes\(k\) && appOn\(k\)/.test(mo) && /BLOCK_ORDER\.filter\(companyHas\)/.test(mo))
   const mu = read('ManageUsers.jsx')
   check('Users: app ticks only for apps the company has', /const companyApps = APP_OPTIONS\.filter\(\(a\) => appOn\(a\.key\)\)/.test(mu) && !/\{APP_OPTIONS\.map/.test(mu))
+}
+
+// ── Fallbacks (#561): parts that read another app/module leave it out when off
+if (APP !== 'finance') check('context also gives isOn(app, module) for other apps', /\n    isOn: switches\.moduleOn,\n/.test(ctx))
+if (APP === 'hr_linen') {
+  check('HR: reads member_billing_enabled so Finance › Members is known', /select\('id, slug, name, status, member_billing_enabled'\)/.test(ctx))
+  check('HR: guest feedback only with the Guest feedback module, member reviews only with Finance › Members', /const fbRes = moduleOn\('feedback'\)/.test(app) && /const mrRes = isOn\('finance', 'members'\)/.test(app))
+  check('HR: staffing cover only with the PMS link (no bookings read without it)', /const hasBookings = isOn\('finance', 'pms'\)/.test(app) && /if \(!hasBookings\) \{\s*setBookings\(\[\]\)/.test(app) && /\{hasBookings && \(<div style=\{styles\.card\}>/.test(app))
+  check('HR: staff meals only with Food/Beverage Stock, uniform cost only with Uniforms', /withFood: appOn\('food_stock'\), withDrinks: appOn\('beverage'\), withUniforms: moduleOn\('uniforms'\)/.test(app))
+  check('HR: dashboard cards follow Uniforms, Linen, Contracts', /role === 'hradmin' && hasContracts && \(/.test(app) && /\{\(hasUniforms \|\| hasLinen\) && <div style=\{styles\.card\}>/.test(app))
+  check('HR: employee drawer Uniforms tab only with Uniforms', /EMPLOYEE_TABS\.filter\(\(t\) => t\.id !== 'uniforms' \|\| moduleOn\('uniforms'\)\)/.test(app))
+  const eng = readFileSync(join(ROOT, 'src', 'staffCostEngine.js'), 'utf8')
+  check('HR: staff cost engine skips the sources it is told are off', /!withFood \? \{\} : getStaffIssueCostByWeek/.test(eng) && /!withDrinks \? \{\} : getStaffIssueCostByWeek/.test(eng) && /!withUniforms \? \{\} : getUniformCostByEmployee/.test(eng))
+}
+if (APP === 'ops') {
+  check('Ops: drivers from HR only with HR (typed name otherwise)', /appOn\("hr_linen"\) \? sb\.select\("hr_employees"/.test(app))
+  check('Ops: job cards read and service jobs created only with Maintenance', /appOn\("maintenance"\) \? sb\.select\("maint_jobs"/.test(app) && /if \(appOn\("maintenance"\)\) syncServiceJobs\(/.test(app))
+  check('Ops: a maintenance trip needs a job card only when there is a Maintenance app', /if\(isMaintenanceTrip && hasMaint && !form\.job_id\)/.test(app) && /job_id: isMaintenanceTrip && hasMaint \?/.test(app))
+  check('Ops: vehicle depreciation only with Finance › Fixed assets', /isOn\("finance", "assets"\) \? sb\.select\("fixed_assets"/.test(app))
+  check('Ops: dashboard fuel and parts tiles follow their modules', /\{hasFuel && <KPI label="Diesel Issued"/.test(app) && /\{hasParts && <KPI label="Parts Issued"/.test(app))
+}
+if (APP === 'maintenance') {
+  check('Maintenance: projects data only with Projects (no calendar milestones otherwise)', /\.\.\.\(moduleOn\("projects"\)/.test(app))
+  check('Maintenance: staff and leave only with HR, lodge rota only with HR › Schedule', /appOn\("hr_linen"\) \? sb\.select\("hr_employees"/.test(app) && /isOn\("hr_linen", "schedule"\) \? sb\.select\("hr_schedule_locations"/.test(app))
+  check('Maintenance: vehicle cost only with Ops › Vehicle log', /isOn\("ops", "triplog"\) \? sb\.select\("vehicle_trips"/.test(app))
+  check('Maintenance: materials tabs and dashboard stock only with Stock', /\.\.\.\(jobModuleOn\("stock"\)/.test(app) && /tplModuleOn\("stock"\)\?/.test(app) && /items=\{moduleOn\("stock"\)\?items:\[\]\}/.test(app))
 }
 
 console.log(`company_switches_test (${APP}): ${passed} passed, ${failures.length} failed`)

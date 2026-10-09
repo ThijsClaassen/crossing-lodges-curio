@@ -240,6 +240,8 @@ export function CompanyProvider({ children }) {
     switchCompany,
     appOn: switches.appOn,
     moduleOn: (mod) => switches.moduleOn(APP_KEY, mod),
+    // Any app's module, for the parts of this app that use another app (#561).
+    isOn: switches.moduleOn,
     noCompany,
     reload: load,
   }

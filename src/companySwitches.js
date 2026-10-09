@@ -7,13 +7,54 @@
 //   - a module is off when its app is off;
 //   - the three modules that had a company column before keep following that
 //     column while they have no switch of their own (the founders' site keeps
-//     the two in step).
+//     the two in step);
+//   - a module whose source is off counts as off too (#561, NEEDS below), so
+//     nobody gets a screen with nothing to fill it.
 // Pure: no React, no Supabase. Identical in all seven apps (the test checks).
 
 export const LEGACY_COLUMN = {
   'finance/members': 'member_billing_enabled',
   'finance/guesteco': 'guest_economics_enabled',
   'ops/triplog': 'vehicle_register_enabled',
+}
+
+// What a module needs to work (#561). The founders' site warns about the same
+// list; here it is enforced: with what it needs switched off, the module
+// counts as off, whatever its own switch says. Keep in step with `needs` in
+// crossing-lodges-platform/src/catalogue.js.
+export const NEEDS = {
+  'finance/reservations': [['finance', 'pms']],
+  'finance/marketing': [['finance', 'pms']],
+  'finance/guesteco': [['finance', 'pms']],
+  'finance/payroll': [['hr_linen', 'contracts']],
+  'maintenance/mtb': [['maintenance', 'stock']],
+  'food_stock/billmember': [['finance', 'members']],
+  'beverage/billmember': [['finance', 'members']],
+  'curio/billmember': [['finance', 'members']],
+  'maintenance/billmember': [['finance', 'members']],
+}
+
+// The P&L lines the system fills itself, and the module each comes from
+// (#561). While that module is on, the line is "live": it is filled from the
+// app and closed to bank allocation. With the module off it is an ordinary
+// line again: bank allocation and P&L imports, like every other line.
+// Marketing used to be here (from the old marketing-spend entries); since
+// that entry screen went (#64) it is an ordinary, bank-allocated line.
+export const LIVE_SOURCES = {
+  revenue: ['finance', 'pms'],
+  fuel: ['ops', 'fuel'],
+  parts: ['ops', 'parts'],
+  repairs: ['ops', 'parts'],
+  cogs_beverage: ['beverage', 'core'],
+  income_curio_shop: ['finance', 'yoco'],
+  income_massages: ['finance', 'yoco'],
+  income_premium_food_and_beverages: ['finance', 'yoco'],
+}
+
+// The live P&L lines for a company, as a Set of category ids. moduleOn is
+// (app, module) => boolean, e.g. makeSwitches(...).moduleOn.
+export function liveCategories(moduleOn) {
+  return new Set(Object.entries(LIVE_SOURCES).filter(([, [app, mod]]) => moduleOn(app, mod)).map(([id]) => id))
 }
 
 // company_features rows ({company_id, app_key, module_key, enabled}) grouped
@@ -36,16 +77,21 @@ export function makeSwitches(rows, company) {
     const r = find(app, '')
     return r ? r.enabled !== false : true
   }
-  const moduleOn = (app, mod) => {
-    if (!appOn(app)) return false
-    if (!mod || mod === 'core') return true
+  const ownSwitch = (app, mod) => {
     const r = find(app, mod)
     if (r) return r.enabled !== false
     const col = LEGACY_COLUMN[`${app}/${mod}`]
     if (col && company && col in company) return !!company[col]
     return true
   }
-  return { appOn, moduleOn }
+  const moduleOn = (app, mod, depth = 0) => {
+    if (!appOn(app)) return false
+    if (!mod || mod === 'core') return true
+    if (!ownSwitch(app, mod)) return false
+    // depth: NEEDS has no loops, but a typo must not hang an app.
+    return depth > 5 || (NEEDS[`${app}/${mod}`] || []).every(([a, m]) => moduleOn(a, m, depth + 1))
+  }
+  return { appOn, moduleOn: (app, mod) => moduleOn(app, mod) }
 }
 
 // Everything on: what an app uses before the switches have loaded, or when
