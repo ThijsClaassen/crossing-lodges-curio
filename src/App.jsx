@@ -8,6 +8,7 @@ import { supabase } from './supabaseClient.js'
 import Login from './Login.jsx'
 import SetPassword from './SetPassword.jsx'
 import { CompanyProvider, useCompany } from './CompanyContext.jsx'
+import { noCompanyText, visibleTabs } from './companySwitches.js'
 import { SUPABASE_URL } from './supabaseClient'
 import { resolveCompanyLogo, logoStyle } from './companyLogo.js'
 import { uploadPurchaseSlip, getSlipUrl } from './slipUpload.js'
@@ -694,6 +695,11 @@ const STAFF_TABS = [
   { id: 'count', label: 'Count' },
 ]
 
+// Which module each tab belongs to (#560 step 3). A module switched off for
+// the company on the founders' site takes its tab out of the menu; a tab
+// not listed here is part of the app itself and always shows.
+const TAB_MODULE = { transfers: 'transfers', yoco: 'yoco' }
+
 // ---------------------------------------------------------------------------
 // App
 // ---------------------------------------------------------------------------
@@ -752,6 +758,8 @@ function AuthenticatedApp() {
     role,
     switchCompany,
     company,
+    moduleOn,
+    noCompany,
 } = useCompany()
 
   // The client's logo if they have one, ours if they don't (2026-09-22).
@@ -1007,7 +1015,7 @@ function AuthenticatedApp() {
 
   // Android back button → this role's first page (#555). Worked out here,
   // before the early returns, the same way activeTab is below.
-  const backTabs = role === 'admin' ? ADMIN_TABS : STAFF_TABS
+  const backTabs = visibleTabs(role === 'admin' ? ADMIN_TABS : STAFF_TABS, TAB_MODULE, moduleOn)
   useBackToHome({ page: backTabs.some((t) => t.id === tab) ? tab : backTabs[0]?.id, setPage: setTab, home: backTabs[0]?.id })
 
   if (companyLoading) {
@@ -1029,13 +1037,13 @@ function AuthenticatedApp() {
   if (!companyId) {
     return (
       <AuthMessageScreen>
-        <p>Your account doesn't have access to any company yet. Contact an administrator.</p>
+        <p>{noCompanyText(noCompany, 'Curio Shop')}</p>
       </AuthMessageScreen>
     )
   }
 
-  const TABS = role === 'admin' ? ADMIN_TABS : STAFF_TABS
-  const activeTab = TABS.some((t) => t.id === tab) ? tab : TABS[0].id
+  const TABS = visibleTabs(role === 'admin' ? ADMIN_TABS : STAFF_TABS, TAB_MODULE, moduleOn)
+  const activeTab = TABS.some((t) => t.id === tab) ? tab : TABS[0]?.id
 
   return (
     <div className="shell">
@@ -3469,7 +3477,7 @@ function MemberPurchaseCard({ companyId, location, refreshSignal }) {
 }
 
 function PurchasesTab({ items, purchases, suppliers, location, period, onAdd, onUpdate, onRemove, companyId, slips, onSlipAttached, creditNotes, metricsByItem, onAddCredit, onRemoveCredit, onIssueAdd, onIssueRemove }) {
-  const { memberBillingEnabled } = useCompany()
+  const { memberBillingEnabled, moduleOn } = useCompany()
   const [memberPendingRefresh, setMemberPendingRefresh] = useState(0)
   // Credit Notes (2026-08-25) — lives inside Purchases as a toggle rather
   // than its own nav tab: it's the same "wrong thing was bought" moment as
@@ -3545,16 +3553,19 @@ function PurchasesTab({ items, purchases, suppliers, location, period, onAdd, on
 
   return (
     <>
-      <SlipScanCard
-        items={items}
-        suppliers={suppliers}
-        location={location}
-        companyId={companyId}
-        onApproved={(rows) => rows.forEach(onAdd)}
-        onSlipAttached={onSlipAttached}
-        memberBillingEnabled={memberBillingEnabled}
-        onMemberPending={() => setMemberPendingRefresh((n) => n + 1)}
-      />
+      {/* The slip scanner is a module of its own (#560 step 3). */}
+      {moduleOn('slips') && (
+        <SlipScanCard
+          items={items}
+          suppliers={suppliers}
+          location={location}
+          companyId={companyId}
+          onApproved={(rows) => rows.forEach(onAdd)}
+          onSlipAttached={onSlipAttached}
+          memberBillingEnabled={memberBillingEnabled}
+          onMemberPending={() => setMemberPendingRefresh((n) => n + 1)}
+        />
+      )}
 
       {memberBillingEnabled && (
         <MemberPurchaseCard companyId={companyId} location={location} refreshSignal={memberPendingRefresh} />
